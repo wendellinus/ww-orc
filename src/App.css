@@ -1,0 +1,41 @@
+/* 界面视觉使用 shadcn 预设；这里只定义桌面容器和中文字体回退。 */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+}
+
+#root {
+  overflow: hidden;
+}
+
+.app-window {
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.app-window[data-maximized="true"] {
+  border-radius: 0;
+}
+
+body {
+  overflow: hidden;
+  font-family: "Noto Sans Variable", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-heading {
+  font-family: "Roboto Variable", "Microsoft YaHei", sans-serif;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+.window-close-button:not(:disabled):hover {
+  background-color: #e81123;
+  color: #fff;
+}
