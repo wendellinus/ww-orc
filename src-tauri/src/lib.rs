@@ -2,9 +2,15 @@
 use paddle_ocr_rs::ocr_lite::OcrLite;
 use serde::Serialize;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::Manager;
+
+const MAX_CLIPBOARD_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+static NEXT_TEMP_IMAGE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -85,6 +91,36 @@ struct OcrResult {
     text: String,
 }
 
+struct TempImage(PathBuf);
+
+impl Drop for TempImage {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn write_clipboard_temp_image(bytes: &[u8], extension: &str) -> Result<TempImage, String> {
+    for _ in 0..100 {
+        let id = NEXT_TEMP_IMAGE_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "ww-ocr-paste-{}-{id}.{extension}",
+            std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let image = TempImage(path);
+                file.write_all(bytes)
+                    .map_err(|e| format!("写入粘贴图片失败: {e}"))?;
+                return Ok(image);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("创建粘贴图片临时文件失败: {error}")),
+        }
+    }
+
+    Err("无法创建粘贴图片临时文件，请重试".to_string())
+}
+
 fn model_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let bundled = app
         .path()
@@ -123,12 +159,41 @@ fn ocr_image(
     Ok(OcrResult { text })
 }
 
+/// 接收粘贴事件中的内存图片，临时落盘以复用只接受路径的 OCR 引擎。
+#[tauri::command]
+fn ocr_image_bytes(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, OcrEngineState>,
+    request: tauri::ipc::Request,
+) -> Result<OcrResult, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("剪贴板图片传输格式无效".to_string());
+    };
+    if bytes.is_empty() {
+        return Err("剪贴板图片内容为空".to_string());
+    }
+    if bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return Err("剪贴板图片不能超过 20 MB".to_string());
+    }
+
+    let extension = match image::guess_format(bytes) {
+        Ok(image::ImageFormat::Png) => "png",
+        Ok(image::ImageFormat::Jpeg) => "jpg",
+        Ok(_) => return Err("剪贴板图片格式不受支持，请使用 PNG、JPG 或 JPEG".to_string()),
+        Err(error) => return Err(format!("无法读取剪贴板图片: {error}")),
+    };
+    let image = write_clipboard_temp_image(bytes, extension)?;
+    let text = state.recognize(&model_dir(&app)?, &image.0)?;
+
+    Ok(OcrResult { text })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(OcrEngineState::default())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, ocr_image])
+        .invoke_handler(tauri::generate_handler![greet, ocr_image, ocr_image_bytes])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

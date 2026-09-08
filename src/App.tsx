@@ -7,6 +7,7 @@ import {
   Copy,
   FileImage,
   LoaderCircle,
+  Keyboard,
   Minus,
   Pin,
   ScanText,
@@ -17,14 +18,32 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { ShortcutSettings } from "@/components/shortcut-settings";
+import { useShortcuts } from "@/hooks/use-shortcuts";
+import { type Command } from "@/lib/shortcuts/registry";
 import "./App.css";
 
 type OcrResult = { text: string };
 const IMG_RE = /\.(png|jpe?g)$/i;
+const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function isEditablePasteTarget(event: ClipboardEvent) {
+  return event
+    .composedPath()
+    .some(
+      (target) =>
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.matches("input, textarea, select, [role='textbox']")),
+    );
+}
 
 function App() {
   const desktop = isTauri();
   const busy = useRef(false);
+  const resultRef = useRef<HTMLTextAreaElement>(null);
+  const pastedPreviewUrl = useRef<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const draggedImagePath = useRef<string | null>(null);
   const [alwaysOnTop, setAlwaysOnTop] = useState(true);
@@ -45,33 +64,102 @@ function App() {
     const x = position.x / scaleFactor;
     const y = position.y / scaleFactor;
     return (
-      x >= rect.left &&
-      x <= rect.right &&
-      y >= rect.top &&
-      y <= rect.bottom
+      x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
     );
   }
 
-  const runOcr = useCallback(async (path: string) => {
-    if (busy.current) return;
-    busy.current = true;
-    setLoading(true);
-    setError(null);
-    setText("");
-    setCopied(false);
-    setPreview(null);
-    setFileName(path.split(/[\\/]/).pop() || path);
-    try {
-      const result = await invoke<OcrResult>("ocr_image", { path });
-      setPreview(convertFileSrc(path));
-      setText(result.text);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      busy.current = false;
-      setLoading(false);
-    }
+  const releasePastedPreview = useCallback(() => {
+    if (!pastedPreviewUrl.current) return;
+    URL.revokeObjectURL(pastedPreviewUrl.current);
+    pastedPreviewUrl.current = null;
   }, []);
+
+  const runOcr = useCallback(
+    async (path: string) => {
+      if (busy.current) return;
+      busy.current = true;
+      setLoading(true);
+      setError(null);
+      setText("");
+      setCopied(false);
+      releasePastedPreview();
+      setPreview(null);
+      setFileName(path.split(/[\\/]/).pop() || path);
+      try {
+        const result = await invoke<OcrResult>("ocr_image", { path });
+        setPreview(convertFileSrc(path));
+        setText(result.text);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        busy.current = false;
+        setLoading(false);
+      }
+    },
+    [releasePastedPreview],
+  );
+
+  const runPastedOcr = useCallback(
+    async (file: File) => {
+      if (busy.current) return;
+      if (file.size > MAX_CLIPBOARD_IMAGE_BYTES) {
+        setError("剪贴板图片不能超过 20 MB。");
+        return;
+      }
+
+      busy.current = true;
+      setLoading(true);
+      setError(null);
+      setText("");
+      setCopied(false);
+      releasePastedPreview();
+      setPreview(null);
+      setFileName(file.name || "剪贴板图片");
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const result = await invoke<OcrResult>("ocr_image_bytes", bytes);
+        const previewUrl = URL.createObjectURL(file);
+        pastedPreviewUrl.current = previewUrl;
+        setPreview(previewUrl);
+        setText(result.text);
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        busy.current = false;
+        setLoading(false);
+      }
+    },
+    [releasePastedPreview],
+  );
+
+  useEffect(() => () => releasePastedPreview(), [releasePastedPreview]);
+
+  useEffect(() => {
+    if (!desktop || shortcutsOpen) return;
+
+    const handlePaste = (event: ClipboardEvent) => {
+      if (isEditablePasteTarget(event)) return;
+      const imageItem = Array.from(event.clipboardData?.items ?? []).find(
+        (item) => item.kind === "file" && item.type.startsWith("image/"),
+      );
+      if (!imageItem) return;
+
+      event.preventDefault();
+      if (busy.current) {
+        setError("正在识别图片，请稍后再粘贴。");
+        return;
+      }
+      const file = imageItem.getAsFile();
+      if (!file) {
+        setError("无法读取剪贴板图片，请重新复制后再试。");
+        return;
+      }
+      void runPastedOcr(file);
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [desktop, runPastedOcr, shortcutsOpen]);
 
   useEffect(() => {
     if (!desktop) return;
@@ -92,20 +180,24 @@ function App() {
       .catch((e) => {
         if (!disposed) setError(`读取窗口状态失败：${String(e)}`);
       });
-    void win.onResized(() => {
-      void win.isMaximized()
-        .then((value) => {
-          if (!disposed) setMaximized(value);
-        })
-        .catch((e) => {
-          if (!disposed) setError(`读取窗口状态失败：${String(e)}`);
-        });
-    }).then((unlisten) => {
-      if (disposed) unlisten();
-      else unlistenResize = unlisten;
-    }).catch((e) => {
-      if (!disposed) setError(`监听窗口状态失败：${String(e)}`);
-    });
+    void win
+      .onResized(() => {
+        void win
+          .isMaximized()
+          .then((value) => {
+            if (!disposed) setMaximized(value);
+          })
+          .catch((e) => {
+            if (!disposed) setError(`读取窗口状态失败：${String(e)}`);
+          });
+      })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlistenResize = unlisten;
+      })
+      .catch((e) => {
+        if (!disposed) setError(`监听窗口状态失败：${String(e)}`);
+      });
     return () => {
       disposed = true;
       unlistenResize?.();
@@ -180,9 +272,15 @@ function App() {
     }
   }
 
-  async function handleWindowAction(action: "minimize" | "toggleMaximize" | "close") {
+  async function handleWindowAction(
+    action: "minimize" | "toggleMaximize" | "close",
+  ) {
     if (!desktop) return;
-    const labels = { minimize: "最小化", toggleMaximize: "切换窗口大小", close: "关闭窗口" };
+    const labels = {
+      minimize: "最小化",
+      toggleMaximize: "切换窗口大小",
+      close: "关闭窗口",
+    };
     try {
       const win = getCurrentWindow();
       await win[action]();
@@ -201,14 +299,81 @@ function App() {
     }
   }
 
+  const commands: Command[] = [
+    {
+      id: "app.shortcuts",
+      title: "快捷键设置",
+      scope: "app",
+      shortcut: "Mod+Slash",
+      allowInEditable: true,
+      run: () => setShortcutsOpen(true),
+    },
+    {
+      id: "ocr.copyText",
+      title: "复制识别文字",
+      scope: "workspace",
+      shortcut: "Mod+Shift+Y",
+      allowInEditable: true,
+      enabled: () => Boolean(text) && !busy.current,
+      run: copyText,
+    },
+    {
+      id: "ocr.focusResult",
+      title: "聚焦识别结果",
+      scope: "workspace",
+      shortcut: "Mod+Shift+E",
+      allowInEditable: true,
+      enabled: () => Boolean(preview) && !busy.current,
+      run: () => {
+        resultRef.current?.focus();
+      },
+    },
+    {
+      id: "window.toggleAlwaysOnTop",
+      title: "切换窗口置顶",
+      scope: "app",
+      shortcut: "Mod+Shift+P",
+      enabled: () => desktop,
+      run: toggleAlwaysOnTop,
+    },
+    {
+      id: "window.minimize",
+      title: "最小化窗口",
+      scope: "app",
+      enabled: () => desktop,
+      run: () => handleWindowAction("minimize"),
+    },
+    {
+      id: "window.toggleMaximize",
+      title: "最大化 / 还原窗口",
+      scope: "app",
+      enabled: () => desktop,
+      run: () => handleWindowAction("toggleMaximize"),
+    },
+    {
+      id: "window.close",
+      title: "关闭窗口",
+      scope: "app",
+      enabled: () => desktop,
+      run: () => handleWindowAction("close"),
+    },
+  ];
+  const shortcuts = useShortcuts(
+    commands,
+    {
+      // Until workspace management is introduced, this shell owns one explicit workspace.
+      workspaceId: "default",
+      scopes: shortcutsOpen ? ["dialog"] : ["app", "workspace"],
+    },
+    setError,
+  );
+
   return (
     <main
       className="app-window flex h-dvh min-h-0 flex-col bg-background text-foreground"
       data-maximized={maximized}
     >
-      <header
-        className="flex h-12 shrink-0 items-center gap-3 border-b px-4"
-      >
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
         <div
           className="flex min-w-0 flex-1 items-center self-stretch select-none"
           data-tauri-drag-region
@@ -217,16 +382,29 @@ function App() {
             ww-ocr
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1" role="group" aria-label="窗口操作">
+        <div
+          className="flex shrink-0 items-center gap-1"
+          role="group"
+          aria-label="窗口操作"
+        >
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => void shortcuts.execute("app.shortcuts")}
+            aria-label="快捷键设置"
+            title={`快捷键设置 (${shortcuts.label("app.shortcuts")})`}
+          >
+            <Keyboard aria-hidden="true" />
+          </Button>
           <Button
             size="icon-sm"
             variant="ghost"
             className="border-0 text-muted-foreground hover:bg-primary/10 hover:text-primary hover:shadow-sm aria-pressed:bg-primary/15 aria-pressed:text-primary"
             aria-pressed={alwaysOnTop}
             disabled={!desktop}
-            onClick={() => void toggleAlwaysOnTop()}
+            onClick={() => void shortcuts.execute("window.toggleAlwaysOnTop")}
             aria-label="窗口置顶"
-            title={alwaysOnTop ? "取消置顶" : "窗口置顶"}
+            title={`${alwaysOnTop ? "取消置顶" : "窗口置顶"} (${shortcuts.label("window.toggleAlwaysOnTop")})`}
           >
             <Pin
               className={cn(
@@ -241,7 +419,7 @@ function App() {
             variant="ghost"
             className="border-0 text-muted-foreground hover:bg-muted hover:text-foreground"
             disabled={!desktop}
-            onClick={() => void handleWindowAction("minimize")}
+            onClick={() => void shortcuts.execute("window.minimize")}
             aria-label="最小化"
             title="最小化"
           >
@@ -252,7 +430,7 @@ function App() {
             variant="ghost"
             className="border-0 text-muted-foreground hover:bg-muted hover:text-foreground"
             disabled={!desktop}
-            onClick={() => void handleWindowAction("toggleMaximize")}
+            onClick={() => void shortcuts.execute("window.toggleMaximize")}
             aria-label={maximized ? "还原窗口" : "最大化"}
             title={maximized ? "还原窗口" : "最大化"}
           >
@@ -267,7 +445,7 @@ function App() {
             variant="ghost"
             className="window-close-button border-0 text-muted-foreground"
             disabled={!desktop}
-            onClick={() => void handleWindowAction("close")}
+            onClick={() => void shortcuts.execute("window.close")}
             aria-label="关闭窗口"
             title="关闭窗口"
           >
@@ -286,7 +464,7 @@ function App() {
             role="alert"
             className="flex shrink-0 items-start justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
           >
-            <p className="min-w-0 break-words">{error}</p>
+            <p className="min-w-0 wrap-break-word">{error}</p>
             <Button
               variant="ghost"
               size="icon-xs"
@@ -373,7 +551,8 @@ function App() {
                     size="xs"
                     variant={copied ? "secondary" : "default"}
                     disabled={!text}
-                    onClick={() => void copyText()}
+                    onClick={() => void shortcuts.execute("ocr.copyText")}
+                    title={shortcuts.label("ocr.copyText")}
                   >
                     {copied ? (
                       <Check aria-hidden="true" />
@@ -386,6 +565,7 @@ function App() {
                 <div className="flex min-h-0 flex-1 p-3">
                   <Textarea
                     id="ocr-text"
+                    ref={resultRef}
                     readOnly
                     value={text}
                     placeholder="未识别到文字。试试更清晰、文字方向正确的图片。"
@@ -410,10 +590,10 @@ function App() {
               </div>
               <div>
                 <h2 className="font-heading text-xl font-semibold tracking-tight">
-                  把图片拖到这里
+                  拖入或粘贴图片
                 </h2>
                 <p className="mt-3 max-w-sm text-sm leading-6 text-muted-foreground">
-                  从文件资源管理器拖入图片，
+                  从文件资源管理器拖入图片，或复制图片后按 Ctrl+V，
                   <br />
                   识别完成后即可查看和复制文字。
                 </p>
@@ -430,6 +610,15 @@ function App() {
         </div>
       </section>
 
+      {shortcutsOpen ? (
+        <ShortcutSettings
+          commands={commands}
+          config={shortcuts.config}
+          platform={shortcuts.platform}
+          onSave={shortcuts.saveConfig}
+          onClose={() => setShortcutsOpen(false)}
+        />
+      ) : null}
     </main>
   );
 }

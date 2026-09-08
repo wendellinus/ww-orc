@@ -14,10 +14,16 @@ body,
 
 .app-window {
   overflow: hidden;
+}
+
+/* 原生模态遮罩位于顶层，不受容器 overflow 裁剪，需同步透明窗口的圆角。 */
+.app-window,
+.app-window dialog::backdrop {
   border-radius: 16px;
 }
 
-.app-window[data-maximized="true"] {
+.app-window[data-maximized="true"],
+.app-window[data-maximized="true"] dialog::backdrop {
   border-radius: 0;
 }
 
