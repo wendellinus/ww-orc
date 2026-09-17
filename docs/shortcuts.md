@@ -6,17 +6,13 @@
 
 | 命令 ID | 默认组合键 | 作用域 |
 | --- | --- | --- |
-| `app.shortcuts` | `Mod+Slash` | app |
 | `ocr.copyText` | `Mod+Shift+Y` | workspace |
 | `ocr.focusResult` | `Mod+Shift+E` | workspace |
 | `window.toggleAlwaysOnTop` | `Mod+Shift+P` | app |
-| `window.minimize` | 未设置 | app |
-| `window.toggleMaximize` | 未设置 | app |
-| `window.close` | 未设置 | app |
 
-Mod 在 Windows/Linux 对应 Ctrl，在 macOS 对应 Meta（⌘）。点击标题栏键盘按钮，或按 Ctrl+/ 打开设置。保存后立即生效，刷新/重新打开应用后恢复。留空禁用绑定；恢复默认只修改草稿，点击保存后才生效。
+Mod 在 Windows/Linux 对应 Ctrl，在 macOS 对应 Meta（⌘）。点击标题栏键盘按钮打开设置。当前仅提供复制识别内容、聚焦识别结果和窗口置顶三项快捷键。保存后立即生效，刷新/重新打开应用后恢复。设置仅支持按键录制：点击快捷键显示框，再按下组合键；Esc、Tab、再次点击快捷键框或窗口失焦会取消录制并保留原绑定。点击快捷键框内的 × 可禁用绑定；录制、清除和恢复默认只修改草稿，点击保存后才生效。冲突、无效按键和保留键会提示错误，并继续等待重新录制。
 
-窗口和复制按钮通过相同命令入口执行，共用可用条件和进行中去重。浏览器预览中原生窗口命令不可用。当前拖图 OCR 流程继续使用已有的 `runOcr`。
+复制和置顶操作通过命令入口执行，共用可用条件和进行中去重。设置入口与最小化、最大化、关闭窗口通过标题栏按钮操作，不注册快捷键。浏览器预览中原生窗口命令不可用。当前拖图 OCR 流程继续使用已有的 `runOcr`。
 
 ## 模块边界
 
@@ -29,11 +25,12 @@ App 命令定义 ─────────────┐
                  ShortcutStorage
 ```
 
-- `src/lib/shortcuts/keys.ts`：组合键规范化、精确修饰键匹配、平台映射、显示格式。
-- `src/lib/shortcuts/config.ts`：版本化配置、持久化接口、作用域内冲突检测和覆盖合并。
-- `src/lib/shortcuts/registry.ts`：命令可用性、作用域路由、执行上下文快照、异步去重和取消。
-- `src/hooks/use-shortcuts.ts`：应用壳中的单一键盘订阅；提交后更新命令回调，卸载时解绑并发出取消信号。只在应用壳调用一次，不在各个面板重复挂载。
-- `src/components/shortcut-settings.tsx`：编辑用户级绑定、显示保存错误；原生模态对话框负责焦点限制与返回。
+- `src/modules/shortcuts/model/keys.ts`：组合键规范化、精确修饰键匹配、平台映射、显示格式。
+- `src/modules/shortcuts/model/recording.ts`：录制按键的跨平台修饰键映射、物理标点编码及 IME、AltGraph、长按过滤。
+- `src/modules/shortcuts/model/config.ts`：版本化配置、持久化接口、作用域内冲突检测和覆盖合并。
+- `src/modules/shortcuts/model/registry.ts`：命令可用性、作用域路由、执行上下文快照、异步去重和取消。
+- `src/modules/shortcuts/hooks/use-shortcuts.ts`：应用壳中的单一键盘订阅；提交后更新命令回调，卸载时解绑并发出取消信号。只在应用壳调用一次，不在各个面板重复挂载。
+- `src/modules/shortcuts/ui/shortcut-settings.tsx`：录制用户级绑定、清除与恢复默认、显示录制和保存错误；原生模态对话框负责焦点限制与返回。
 
 命令的 `id` 是稳定的业务标识，不应因文案或默认按键改变而变化。命令数组本身就是注册清单，功能模块可以导出各自的命令，在应用壳合并注册；移除条目即停止后续调度。
 
@@ -43,7 +40,7 @@ App 命令定义 ─────────────┐
 
 ## 工作区隔离接入
 
-目前应用只有 `default` 工作区，尚未实现多工作区数据隔离。未来用活动工作区 ID 替换这个固定值，并根据当前面板更新 scopes。
+当前已支持默认工作区以及用户创建的多个工作区。活动工作区 ID 由应用壳传入快捷键上下文，图片和 OCR 查询同时携带该 ID；切换工作区后仅加载该工作区的记录。
 
 每次执行都固定 `workspaceId`、scopes、source 和 AbortSignal。命令等待期间切换工作区，不改变已经执行任务的上下文。`app` 命令在全应用去重，其他命令按工作区和命令 ID 去重。
 
@@ -73,7 +70,7 @@ const captureCommand: Command = {
 
 ## 持久化接入
 
-当前只持久化快捷键设置，不保存识别文字或图片。localStorage 键为 `ww-ocr.shortcuts.v1`：
+快捷键设置继续保存在 localStorage，键为 `ww-ocr.shortcuts.v1`；活动工作区使用 `ww-ocr.active-workspace.v1`。工作区、图片元数据和 OCR 结果由 Rust 写入 SQLite，原图保存在 Tauri 的应用本地数据目录：
 
 ```json
 {
@@ -89,10 +86,10 @@ const captureCommand: Command = {
 
 ## 截图 OCR、搜索接入顺序
 
-1. 提取工作区状态和 repository，建立稳定 workspaceId，并让 OCR 写入原工作区。
-2. 接入工作区数据持久化，明确关闭、删除和恢复工作区的行为。
-3. 实现截图服务，注册 `capture.ocr` 命令并复用 OCR 服务。
-4. 实现搜索服务/面板，注册 `search.open` 等命令，区分工作区搜索和应用级搜索。
+1. 已建立稳定 workspaceId、工作区 repository，并让 OCR 写入发起任务的工作区。
+2. 已接入 SQLite 与原图文件持久化，支持创建、切换、重命名和删除工作区。
+3. 后续实现截图服务，注册 `capture.ocr` 命令并复用 OCR 服务。
+4. 后续实现搜索服务/面板，注册 `search.open` 等命令，区分工作区搜索和应用级搜索。
 5. 如需后台截图快捷键，在 Tauri 中增加操作系统全局快捷键适配器。原生注册失败应保留旧绑定并显示错误；收到事件后调度 `shortcuts.execute("capture.ocr", "native")`。必须明确后台截图目标工作区和应用唤醒策略。
 
 当前没有注册操作系统全局快捷键，也没有占用尚未实现功能的默认组合键。
@@ -102,4 +99,4 @@ const captureCommand: Command = {
 - `pnpm test`：使用 Node 22.18+ 的 TypeScript 类型擦除运行核心行为测试，无额外测试依赖。
 - `pnpm build`：TypeScript 检查及生产构建。
 - 浏览器验证：生产构建下检查打开/关闭、焦点限制、冲突、保留键、改键、刷新恢复、禁用、恢复默认、存储失败以及窄窗口布局。浏览器预览无法验证 Tauri 原生窗口行为。
-- 样式规范：使用项目安装的 Tailwind 4.3.3 `canonicalizeCandidates` 检查新增面板 39 个类名，无规范化建议；未运行 VS Code 语言服务诊断。参考 [Tailwind 4.3 宽度规范](https://tailwindcss.com/docs/width)、[最大高度规范](https://tailwindcss.com/docs/max-height) 和 [React useLayoutEffect](https://react.dev/reference/react/useLayoutEffect)。
+- 样式规范：使用项目安装的 Tailwind 4.3.3 `canonicalizeCandidates` 检查设置面板类名，无规范化建议；未运行 VS Code 语言服务诊断。参考 [Tailwind 4.3 宽度规范](https://tailwindcss.com/docs/width)、[最大高度规范](https://tailwindcss.com/docs/max-height) 和 [React useLayoutEffect](https://react.dev/reference/react/useLayoutEffect)。

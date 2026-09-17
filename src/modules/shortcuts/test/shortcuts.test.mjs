@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeShortcut, matchesShortcut, formatShortcut } from "../src/lib/shortcuts/keys.ts";
-import { emptyConfig, parseConfig, resolveBindings, validateBindings, localShortcutStorage, STORAGE_KEY } from "../src/lib/shortcuts/config.ts";
-import { CommandRegistry } from "../src/lib/shortcuts/registry.ts";
+import { normalizeShortcut, matchesShortcut, formatShortcut } from "../model/keys.ts";
+import { emptyConfig, parseConfig, resolveBindings, validateBindings, localShortcutStorage, STORAGE_KEY } from "../model/config.ts";
+import { CommandRegistry } from "../model/registry.ts";
 
 const context = { workspaceId: "a", scopes: ["app", "workspace", "result"] };
 function command(id, extra = {}) {

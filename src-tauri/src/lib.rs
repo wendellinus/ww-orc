@@ -1,21 +1,22 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+mod documents;
+mod ocr_layout;
+mod persistence;
+mod workspace;
+
+use documents::{
+    repository as document_repository,
+    storage::AppStorage,
+    types::{OcrDocument, StoredImage},
+};
 use paddle_ocr_rs::ocr_lite::OcrLite;
-use serde::Serialize;
-use std::fs;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use persistence::{run_migrations, unix_timestamp, Database};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use tauri::Manager;
-
-const MAX_CLIPBOARD_IMAGE_BYTES: usize = 20 * 1024 * 1024;
-static NEXT_TEMP_IMAGE_ID: AtomicU64 = AtomicU64::new(0);
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 struct OcrEngineState(Mutex<Option<OcrLite>>);
 
@@ -52,7 +53,8 @@ impl OcrEngineState {
             let rec = rec_path.to_string_lossy();
             // paddle-ocr-rs 将第 0 类作为 CTC 空白类，但 PaddleOCR 原始字典
             // 不包含这个占位符。生成到临时目录，避免修改打包后的只读资源。
-            let raw_dict = fs::read(&dict_path).map_err(|e| format!("读取 OCR 字典失败: {e}"))?;
+            let raw_dict =
+                fs::read(&dict_path).map_err(|error| format!("读取 OCR 字典失败: {error}"))?;
             let mut normalized_dict = b"#\n".to_vec();
             normalized_dict.extend(raw_dict);
             if !normalized_dict.ends_with(b"\n") {
@@ -61,11 +63,11 @@ impl OcrEngineState {
             let normalized_dict_path =
                 std::env::temp_dir().join(format!("ww-ocr-dict-{}.txt", std::process::id()));
             fs::write(&normalized_dict_path, normalized_dict)
-                .map_err(|e| format!("写入 OCR 临时字典失败: {e}"))?;
+                .map_err(|error| format!("写入 OCR 临时字典失败: {error}"))?;
             let dict = normalized_dict_path.to_string_lossy();
             let mut ocr = OcrLite::new();
             ocr.init_models_with_dict(&det, &cls, &rec, &dict, 2)
-                .map_err(|e| format!("加载 Rust OCR 模型失败: {e}"))?;
+                .map_err(|error| format!("加载 Rust OCR 模型失败: {error}"))?;
             *engine = Some(ocr);
         }
 
@@ -74,126 +76,142 @@ impl OcrEngineState {
             .as_mut()
             .expect("OCR engine must exist")
             .detect_from_path(&image_path, 50, 1024, 0.5, 0.3, 1.6, true, false)
-            .map_err(|e| format!("Rust OCR 识别失败: {e}"))?;
+            .map_err(|error| format!("Rust OCR 识别失败: {error}"))?;
 
-        Ok(result
-            .text_blocks
-            .iter()
-            .map(|block| block.text.trim())
-            .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"))
+        Ok(ocr_layout::format_text(&result.text_blocks))
     }
-}
-
-#[derive(Serialize)]
-struct OcrResult {
-    text: String,
-}
-
-struct TempImage(PathBuf);
-
-impl Drop for TempImage {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
-fn write_clipboard_temp_image(bytes: &[u8], extension: &str) -> Result<TempImage, String> {
-    for _ in 0..100 {
-        let id = NEXT_TEMP_IMAGE_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "ww-ocr-paste-{}-{id}.{extension}",
-            std::process::id()
-        ));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                let image = TempImage(path);
-                file.write_all(bytes)
-                    .map_err(|e| format!("写入粘贴图片失败: {e}"))?;
-                return Ok(image);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(format!("创建粘贴图片临时文件失败: {error}")),
-        }
-    }
-
-    Err("无法创建粘贴图片临时文件，请重试".to_string())
 }
 
 fn model_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let bundled = app
         .path()
         .resource_dir()
-        .map_err(|e| format!("获取应用资源目录失败: {e}"))?
+        .map_err(|error| format!("获取应用资源目录失败: {error}"))?
         .join("models");
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models");
+    let development = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models");
 
     if bundled.is_dir() {
         Ok(bundled)
     } else {
-        Ok(dev)
+        Ok(development)
     }
 }
 
-/// 接收原生拖拽得到的图片路径 -> 由 Rust 直接加载 ONNX OCR 模型
+fn recognize_stored_image(
+    app: &tauri::AppHandle,
+    state: &OcrEngineState,
+    database: &Database,
+    storage: &AppStorage,
+    image: StoredImage,
+) -> Result<OcrDocument, String> {
+    let run_id = match document_repository::create_pending(database, &image) {
+        Ok(run_id) => run_id,
+        Err(error) => {
+            storage.remove_file(&image.absolute_path);
+            return Err(error);
+        }
+    };
+
+    match state.recognize(&model_dir(app)?, &image.absolute_path) {
+        Ok(text) => {
+            document_repository::complete_run(database, &run_id, &text)?;
+            app.asset_protocol_scope()
+                .allow_file(&image.absolute_path)
+                .map_err(|error| format!("授权图片预览失败: {error}"))?;
+
+            Ok(OcrDocument {
+                image_id: image.id,
+                workspace_id: image.workspace_id,
+                file_name: image.original_name,
+                image_path: image.absolute_path.to_string_lossy().into_owned(),
+                status: "completed".to_string(),
+                text,
+                error_message: None,
+                created_at: unix_timestamp()?,
+            })
+        }
+        Err(error) => {
+            if let Err(update_error) = document_repository::fail_run(database, &run_id, &error) {
+                return Err(format!("{error}；同时记录失败状态时出错: {update_error}"));
+            }
+            Err(error)
+        }
+    }
+}
+
 #[tauri::command]
 fn ocr_image(
     app: tauri::AppHandle,
     state: tauri::State<'_, OcrEngineState>,
+    database: tauri::State<'_, Database>,
+    storage: tauri::State<'_, AppStorage>,
+    workspace_id: String,
     path: String,
-) -> Result<OcrResult, String> {
-    let image_path = PathBuf::from(path.trim());
-    if !image_path.is_file() {
-        return Err(format!("图片文件不存在: {}", image_path.display()));
+) -> Result<OcrDocument, String> {
+    if !workspace::repository::exists(&database, &workspace_id)? {
+        return Err("工作区不存在".to_string());
     }
 
-    // 首次请求时加载模型，后续请求复用同一个 Rust OCR 引擎。
-    let text = state.recognize(&model_dir(&app)?, &image_path)?;
-
-    // 仅授权本次识别的文件，供前端通过 convertFileSrc 加载预览。
-    app.asset_protocol_scope()
-        .allow_file(&image_path)
-        .map_err(|e| format!("授权图片预览失败: {e}"))?;
-
-    Ok(OcrResult { text })
+    let image = storage.store_path(&workspace_id, &PathBuf::from(path.trim()))?;
+    recognize_stored_image(&app, &state, &database, &storage, image)
 }
 
-/// 接收粘贴事件中的内存图片，临时落盘以复用只接受路径的 OCR 引擎。
 #[tauri::command]
 fn ocr_image_bytes(
     app: tauri::AppHandle,
     state: tauri::State<'_, OcrEngineState>,
+    database: tauri::State<'_, Database>,
+    storage: tauri::State<'_, AppStorage>,
     request: tauri::ipc::Request,
-) -> Result<OcrResult, String> {
+) -> Result<OcrDocument, String> {
+    let workspace_id = request
+        .headers()
+        .get("x-workspace-id")
+        .ok_or_else(|| "缺少工作区 ID".to_string())?
+        .to_str()
+        .map_err(|_| "工作区 ID 格式无效".to_string())?;
+
+    if !workspace::repository::exists(&database, workspace_id)? {
+        return Err("工作区不存在".to_string());
+    }
+
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("剪贴板图片传输格式无效".to_string());
     };
-    if bytes.is_empty() {
-        return Err("剪贴板图片内容为空".to_string());
-    }
-    if bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
-        return Err("剪贴板图片不能超过 20 MB".to_string());
-    }
 
-    let extension = match image::guess_format(bytes) {
-        Ok(image::ImageFormat::Png) => "png",
-        Ok(image::ImageFormat::Jpeg) => "jpg",
-        Ok(_) => return Err("剪贴板图片格式不受支持，请使用 PNG、JPG 或 JPEG".to_string()),
-        Err(error) => return Err(format!("无法读取剪贴板图片: {error}")),
-    };
-    let image = write_clipboard_temp_image(bytes, extension)?;
-    let text = state.recognize(&model_dir(&app)?, &image.0)?;
-
-    Ok(OcrResult { text })
+    let image = storage.store_bytes(workspace_id, bytes)?;
+    recognize_stored_image(&app, &state, &database, &storage, image)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            let data_dir = app.path().app_local_data_dir()?;
+            let database_dir = data_dir.join("database");
+            fs::create_dir_all(&database_dir)?;
+
+            let database =
+                Database::open(&database_dir.join("app.sqlite")).map_err(std::io::Error::other)?;
+            run_migrations(&database).map_err(std::io::Error::other)?;
+            let storage = AppStorage::new(data_dir).map_err(std::io::Error::other)?;
+
+            app.manage(database);
+            app.manage(storage);
+            Ok(())
+        })
         .manage(OcrEngineState::default())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, ocr_image, ocr_image_bytes])
+        .invoke_handler(tauri::generate_handler![
+            workspace::commands::list_workspaces,
+            workspace::commands::create_workspace,
+            workspace::commands::rename_workspace,
+            workspace::commands::delete_workspace,
+            documents::commands::list_documents,
+            documents::commands::delete_document,
+            ocr_image,
+            ocr_image_bytes,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

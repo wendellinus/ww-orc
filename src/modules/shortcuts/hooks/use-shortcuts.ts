@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from "react";
-import { CommandRegistry, type Command, type CommandContext, type CommandExecution } from "@/lib/shortcuts/registry";
-import { emptyConfig, localShortcutStorage, parseConfig, resolveBindings, validateBindings, type ShortcutConfig, type ShortcutStorage } from "@/lib/shortcuts/config";
-import { formatShortcut, type Platform } from "@/lib/shortcuts/keys";
+import { CommandRegistry, type Command, type CommandContext, type CommandExecution } from "../model/registry";
+import { emptyConfig, localShortcutStorage, parseConfig, resolveBindings, validateBindings, type ShortcutConfig, type ShortcutStorage } from "../model/config";
+import { formatShortcut, type Platform } from "../model/keys";
 
 export function useShortcuts(commands: readonly Command[], context: CommandContext, onError: (message: string) => void, storage: ShortcutStorage = localShortcutStorage) {
   const [platform] = useState<Platform>(() => /Mac|iPhone|iPad/.test(navigator.platform) ? "mac" : "other");

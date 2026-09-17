@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
+import App from "./app/App";
 import "./index.css";
 
 // 打包后禁止打开开发者工具：仅生产构建拦截 DevTools 快捷键（开发环境保留）
