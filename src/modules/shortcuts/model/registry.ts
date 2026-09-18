@@ -4,6 +4,7 @@ import { type CommandDefinition } from "./config.ts";
 export type CommandContext = Readonly<{ workspaceId: string | null; scopes: readonly string[] }>;
 export type CommandExecution = CommandContext & { signal: AbortSignal; source: "keyboard" | "button" | "native" };
 export type Command = CommandDefinition & {
+  global?: boolean;
   allowInEditable?: boolean;
   enabled?: (context: CommandContext) => boolean;
   run: (context: CommandExecution) => void | Promise<void>;
@@ -14,7 +15,7 @@ export type ShortcutEvent = KeyInput & {
   preventDefault(): void;
 };
 
-// UI, key events and a future native global-shortcut adapter share this dispatcher.
+// UI, local key events and native global shortcuts share this dispatcher.
 export class CommandRegistry {
   private commands: readonly Command[] = [];
   private context: CommandContext = { workspaceId: null, scopes: ["app"] };
@@ -57,7 +58,7 @@ export class CommandRegistry {
     if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || event.getModifierState?.("AltGraph")) return false;
     // An inner scope owns a matching key even while its command is disabled.
     for (const scope of [...this.context.scopes].reverse()) {
-      const command = this.commands.find((candidate) => candidate.scope === scope && candidate.shortcut && matchesShortcut(candidate.shortcut, event, platform));
+      const command = this.commands.find((candidate) => !candidate.global && candidate.scope === scope && candidate.shortcut && matchesShortcut(candidate.shortcut, event, platform));
       if (!command) continue;
       if ((editable && !command.allowInEditable) || !this.canExecute(command)) return false;
       event.preventDefault();

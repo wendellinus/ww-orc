@@ -1,3 +1,6 @@
+import { isTauri } from "@tauri-apps/api/core";
+import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
+import { GlobalShortcuts } from "../model/global-shortcuts";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { CommandRegistry, type Command, type CommandContext, type CommandExecution } from "../model/registry";
 import { emptyConfig, localShortcutStorage, parseConfig, resolveBindings, validateBindings, type ShortcutConfig, type ShortcutStorage } from "../model/config";
@@ -6,6 +9,7 @@ import { formatShortcut, type Platform } from "../model/keys";
 export function useShortcuts(commands: readonly Command[], context: CommandContext, onError: (message: string) => void, storage: ShortcutStorage = localShortcutStorage) {
   const [platform] = useState<Platform>(() => /Mac|iPhone|iPad/.test(navigator.platform) ? "mac" : "other");
   const [registry] = useState(() => new CommandRegistry());
+  const [native] = useState(() => isTauri() ? new GlobalShortcuts({ register, unregister }, id => { void registry.execute(id, "native"); }) : null);
   const [initial] = useState(() => {
     try {
       const config = parseConfig(storage.load());
@@ -17,7 +21,21 @@ export function useShortcuts(commands: readonly Command[], context: CommandConte
   });
   const [config, setConfig] = useState(initial.config);
   validateBindings(commands, config, platform);
-  const entries = resolveBindings(commands, config, context.workspaceId);
+  const entries = resolveBindings(commands, config, context.workspaceId).map(entry => ({ ...entry, global: native ? entry.global : false }));
+  const globalBindings = (value: ShortcutConfig) => resolveBindings(commands, value, null)
+    .filter(entry => entry.global && entry.shortcut)
+    .map(entry => ({ id: entry.id, shortcut: entry.shortcut! }));
+  const [startupBindings] = useState(() => globalBindings(initial.config));
+  useEffect(() => {
+    if (!native) return;
+    let active = true;
+    void native.replace(startupBindings).catch(error => { if (active) onError(String(error)); });
+    return () => {
+      active = false;
+      void native.replace([]).catch(error => onError(String(error)));
+    };
+  // Settings updates go through saveConfig; do not unregister after a successful save.
+  }, [native, startupBindings]);
   // Publish committed callbacks only. OCR/loading renders don't rebind the listener.
   useLayoutEffect(() => { registry.update(entries, context, onError); });
   useEffect(() => {
@@ -35,11 +53,15 @@ export function useShortcuts(commands: readonly Command[], context: CommandConte
     // onError is published separately; there is one subscription per app shell.
   }, [registry, platform, initial]);
 
-  function saveConfig(next: ShortcutConfig) {
+  async function saveConfig(next: ShortcutConfig) {
     const validated = parseConfig(next);
     validateBindings(commands, validated, platform);
-    storage.save(validated); // Failure leaves both the current bindings and UI state intact.
-    setConfig(validated);
+    const commit = () => {
+      storage.save(validated);
+      setConfig(validated);
+    };
+    if (native) await native.replace(globalBindings(validated), commit);
+    else commit();
   }
   return {
     entries, config, platform, saveConfig,

@@ -35,11 +35,14 @@ export const localShortcutStorage: ShortcutStorage = {
   save(config) { localStorage.setItem(STORAGE_KEY, JSON.stringify(config)); },
 };
 
-export type CommandDefinition = { id: string; title: string; scope: string; shortcut?: string | null };
+export type CommandDefinition = { id: string; title: string; scope: string; global?: boolean; shortcut?: string | null };
 export function resolveBindings<T extends CommandDefinition>(commands: readonly T[], config: ShortcutConfig, workspaceId: string | null) {
   const overrides = { ...config.user, ...(workspaceId === null ? {} : config.workspaces[workspaceId]) };
-  return commands.map((command) => ({ ...command, shortcut: Object.prototype.hasOwnProperty.call(overrides, command.id)
-    ? overrides[command.id] : command.shortcut ?? null }));
+  return commands.map((command) => {
+    const effective = command.global ? config.user : overrides;
+    return { ...command, shortcut: Object.prototype.hasOwnProperty.call(effective, command.id)
+      ? effective[command.id] : command.shortcut ?? null };
+  });
 }
 export function validateBindings(commands: readonly CommandDefinition[], config: ShortcutConfig, platform: Platform): void {
   const ids = new Set<string>();
@@ -49,9 +52,19 @@ export function validateBindings(commands: readonly CommandDefinition[], config:
   }
   for (const workspaceId of [null, ...Object.keys(config.workspaces)]) {
     const occupied = new Map<string, string>();
+    const globalKeys = new Map<string, string>();
+    for (const command of resolveBindings(commands, config, workspaceId)) {
+      if (!command.global || !command.shortcut) continue;
+      const key = shortcutSignature(command.shortcut, platform);
+      if (globalKeys.has(key)) throw new Error(`全局快捷键冲突：${command.title}`);
+      globalKeys.set(key, command.id);
+    }
     for (const command of resolveBindings(commands, config, workspaceId)) {
       if (!command.shortcut) continue;
-      const key = `${command.scope}:${shortcutSignature(command.shortcut, platform)}`;
+      const signature = shortcutSignature(command.shortcut, platform);
+      const globalOwner = globalKeys.get(signature);
+      if (globalOwner && globalOwner !== command.id) throw new Error(`“${command.title}”与全局快捷键冲突。`);
+      const key = `${command.scope}:${signature}`;
       const previous = occupied.get(key);
       if (previous) throw new Error(`“${command.title}”与“${previous}”的快捷键冲突${workspaceId === null ? "" : `（工作区 ${workspaceId}）`}。`);
       occupied.set(key, command.title);

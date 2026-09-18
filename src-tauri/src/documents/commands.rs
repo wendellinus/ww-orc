@@ -15,10 +15,12 @@ pub fn list_documents(
     storage: State<'_, AppStorage>,
     workspace_id: String,
 ) -> Result<Vec<OcrDocument>, String> {
-    repository::list(&database, &workspace_id)?
-        .into_iter()
-        .map(|record| to_document(&app, &storage, record))
-        .collect()
+    crate::logging::operation_with_id("list_documents", &workspace_id, || {
+        repository::list(&database, &workspace_id)?
+            .into_iter()
+            .map(|record| to_document(&app, &storage, record))
+            .collect()
+    })
 }
 
 #[tauri::command]
@@ -28,25 +30,29 @@ pub fn delete_document(
     workspace_id: String,
     image_id: String,
 ) -> Result<(), String> {
-    let relative_path = repository::relative_path(&database, &workspace_id, &image_id)?;
-    let staged = storage.stage_document_deletion(&relative_path)?;
+    crate::logging::operation_with_id("delete_document", &image_id, || {
+        let relative_path = repository::relative_path(&database, &workspace_id, &image_id)?;
+        let staged = storage.stage_document_deletion(&relative_path)?;
 
-    match repository::delete(&database, &workspace_id, &image_id) {
-        Ok(()) => {
-            if let Some(staged) = staged {
-                staged
-                    .finalize()
-                    .map_err(|error| format!("图片记录已删除，但文件清理失败: {error}"))?;
+        match repository::delete(&database, &workspace_id, &image_id) {
+            Ok(()) => {
+                if let Some(staged) = staged {
+                    staged
+                        .finalize()
+                        .map_err(|error| format!("图片记录已删除，但文件清理失败: {error}"))?;
+                }
+                Ok(())
             }
-            Ok(())
-        }
-        Err(error) => {
-            if let Some(staged) = staged {
-                staged.restore()?;
+            Err(error) => {
+                if let Some(staged) = staged {
+                    if let Err(restore_error) = staged.restore() {
+                        return Err(format!("{error}；同时恢复待删除文件失败: {restore_error}"));
+                    }
+                }
+                Err(error)
             }
-            Err(error)
         }
-    }
+    })
 }
 
 pub fn to_document(

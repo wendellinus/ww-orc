@@ -1,12 +1,13 @@
 import {
   Copy,
-  Keyboard,
   Minus,
   Pin,
   Search,
   Square,
   X,
 } from "lucide-react";
+
+import { SettingsMenu } from "./settings-menu";
 
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
@@ -18,6 +19,7 @@ type Props = {
   searchQuery: string;
   onSearchChange: (value: string) => void;
   onOpenShortcuts: () => void;
+  onError: (message: string) => void;
   onToggleAlwaysOnTop: () => void;
   onWindowAction: (action: "minimize" | "toggleMaximize" | "close") => void;
 };
@@ -29,6 +31,7 @@ export function WindowTitleBar({
   searchQuery,
   onSearchChange,
   onOpenShortcuts,
+  onError,
   onToggleAlwaysOnTop,
   onWindowAction,
 }: Props) {
@@ -67,15 +70,7 @@ export function WindowTitleBar({
       </label>
 
       <div data-tauri-drag-region className="flex flex-1 items-center self-stretch justify-end gap-1" role="group" aria-label="窗口操作">
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          onClick={onOpenShortcuts}
-          aria-label="快捷键设置"
-          title="快捷键设置"
-        >
-          <Keyboard aria-hidden="true" />
-        </Button>
+        <SettingsMenu desktop={desktop} onOpenShortcuts={onOpenShortcuts} onError={onError} />
         <Button
           size="icon-sm"
           variant="ghost"

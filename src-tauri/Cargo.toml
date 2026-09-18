@@ -27,3 +27,10 @@ paddle-ocr-rs = "=0.6.1"
 ort = "=2.0.0-rc.10"
 uuid = { version = "1", features = ["v4", "serde"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-log = "=2.9.1"
+log = "0.4.34"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-autostart = "2"
+tauri-plugin-global-shortcut = "2.3.2"

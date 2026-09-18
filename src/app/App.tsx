@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { X } from "lucide-react";
 
 import {
@@ -12,7 +13,11 @@ import {
   recognizeImageBytes,
   type OcrResult,
 } from "@/modules/ocr";
-import { ShortcutSettings, useShortcuts, type Command } from "@/modules/shortcuts";
+import {
+  ShortcutSettings,
+  useShortcuts,
+  type Command,
+} from "@/modules/shortcuts";
 import {
   createWorkspace,
   deleteWorkspace,
@@ -25,7 +30,10 @@ import { Button } from "@/shared/ui/button";
 
 import "./App.css";
 import { WindowTitleBar } from "./ui/window-title-bar";
-import { LibraryActionDialog, type LibraryAction } from "./ui/library-action-dialog";
+import {
+  LibraryActionDialog,
+  type LibraryAction,
+} from "./ui/library-action-dialog";
 
 const IMG_RE = /\.(png|jpe?g)$/i;
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -33,12 +41,14 @@ const ACTIVE_WORKSPACE_KEY = "ww-ocr.active-workspace.v1";
 const ALWAYS_ON_TOP_KEY = "ww-ocr.always-on-top.v1";
 
 function isEditablePasteTarget(event: ClipboardEvent) {
-  return event.composedPath().some(
-    (target) =>
-      target instanceof HTMLElement &&
-      (target.isContentEditable ||
-        target.matches("input, textarea, select, [role='textbox']")),
-  );
+  return event
+    .composedPath()
+    .some(
+      (target) =>
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.matches("input, textarea, select, [role='textbox']")),
+    );
 }
 
 function App() {
@@ -49,7 +59,9 @@ function App() {
   const draggedImagePath = useRef<string | null>(null);
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [libraryAction, setLibraryAction] = useState<LibraryAction | null>(null);
+  const [libraryAction, setLibraryAction] = useState<LibraryAction | null>(
+    null,
+  );
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -59,18 +71,23 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedImageId, setCopiedImageId] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(
+    null,
+  );
   const [documents, setDocuments] = useState<OcrResult[]>([]);
-  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState<string | null>(null);
+  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState<string | null>(
+    null,
+  );
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
 
   const activeWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
-  const selectedDocument = loadedWorkspaceId === activeWorkspaceId ? (
-    documents.find((document) => document.imageId === selectedImageId) ??
-    documents[documents.length - 1] ??
-    null
-  ) : null;
+  const selectedDocument =
+    loadedWorkspaceId === activeWorkspaceId
+      ? (documents.find((document) => document.imageId === selectedImageId) ??
+        documents[documents.length - 1] ??
+        null)
+      : null;
 
   function isInsideDropZone(position: { x: number; y: number }) {
     const rect = dropZoneRef.current?.getBoundingClientRect();
@@ -79,7 +96,9 @@ function App() {
     const scaleFactor = window.devicePixelRatio || 1;
     const x = position.x / scaleFactor;
     const y = position.y / scaleFactor;
-    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    return (
+      x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+    );
   }
 
   const runOcr = useCallback(
@@ -182,7 +201,8 @@ function App() {
         } catch (cause) {
           setError("恢复工作空间失败：" + String(cause));
         }
-        const initialWorkspace = items.find((item) => item.id === savedWorkspaceId) ?? items[0];
+        const initialWorkspace =
+          items.find((item) => item.id === savedWorkspaceId) ?? items[0];
         setActiveWorkspaceId(initialWorkspace?.id ?? null);
       })
       .catch((cause) => {
@@ -421,7 +441,11 @@ function App() {
       const remaining = workspaces.filter((item) => item.id !== workspace.id);
       setWorkspaces(remaining);
       if (workspace.id === activeWorkspaceId) {
-        setActiveWorkspaceId(remaining.find((item) => item.id === "default")?.id ?? remaining[0]?.id ?? null);
+        setActiveWorkspaceId(
+          remaining.find((item) => item.id === "default")?.id ??
+            remaining[0]?.id ??
+            null,
+        );
       }
     } catch (cause) {
       throw new Error(`删除工作空间失败：${String(cause)}`);
@@ -433,7 +457,9 @@ function App() {
 
     try {
       await deleteDocument(activeWorkspaceId, document.imageId);
-      const remaining = documents.filter((item) => item.imageId !== document.imageId);
+      const remaining = documents.filter(
+        (item) => item.imageId !== document.imageId,
+      );
       setDocuments(remaining);
       if (selectedImageId === document.imageId) {
         setSelectedImageId(remaining[remaining.length - 1]?.imageId ?? null);
@@ -447,11 +473,11 @@ function App() {
 
   async function copyDocument(document: OcrResult) {
     try {
-      await navigator.clipboard.writeText(document.text);
+      await writeText(document.text);
       setSelectedImageId(document.imageId);
       setCopiedImageId(document.imageId);
-    } catch {
-      setError("复制失败，请选中文字后手动复制。");
+    } catch (cause) {
+      setError(`复制失败：${String(cause)}`);
     }
   }
 
@@ -471,7 +497,9 @@ function App() {
     }
   }
 
-  async function handleWindowAction(action: "minimize" | "toggleMaximize" | "close") {
+  async function handleWindowAction(
+    action: "minimize" | "toggleMaximize" | "close",
+  ) {
     if (!desktop) return;
     const labels = {
       minimize: "最小化",
@@ -488,7 +516,6 @@ function App() {
   }
 
   const commands: Command[] = [
-
     {
       id: "ocr.copyText",
       title: "复制识别内容",
@@ -511,22 +538,35 @@ function App() {
     },
     {
       id: "window.toggleAlwaysOnTop",
+      global: true,
       title: "窗口置顶",
       scope: "app",
       shortcut: "Mod+Shift+P",
       enabled: () => desktop,
       run: toggleAlwaysOnTop,
     },
-
-
-
+    {
+      id: "window.show",
+      title: "唤起主窗口",
+      scope: "app",
+      global: true,
+      shortcut: "Mod+Shift+O",
+      enabled: () => desktop,
+      run: async () => {
+        const win = getCurrentWindow();
+        await win.show();
+        await win.unminimize();
+        await win.setFocus();
+      },
+    },
   ];
 
   const shortcuts = useShortcuts(
     commands,
     {
       workspaceId: activeWorkspaceId,
-      scopes: shortcutsOpen || libraryAction ? ["dialog"] : ["app", "workspace"],
+      scopes:
+        shortcutsOpen || libraryAction ? ["dialog"] : ["app", "workspace"],
     },
     setError,
   );
@@ -543,7 +583,10 @@ function App() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onOpenShortcuts={() => setShortcutsOpen(true)}
-        onToggleAlwaysOnTop={() => void shortcuts.execute("window.toggleAlwaysOnTop")}
+        onError={setError}
+        onToggleAlwaysOnTop={() =>
+          void shortcuts.execute("window.toggleAlwaysOnTop")
+        }
         onWindowAction={(action) => void handleWindowAction(action)}
       />
 
@@ -554,9 +597,32 @@ function App() {
           query={searchQuery}
           disabled={loading || libraryLoading}
           onSelect={selectWorkspace}
-          onCreate={() => setLibraryAction({ title: "新建工作空间", description: "创建一个空间来整理图片和识别结果。", initialName: "", submitLabel: "创建", onSubmit: handleCreateWorkspace })}
-          onRename={(workspace) => setLibraryAction({ title: "重命名工作空间", description: "输入新的工作空间名称。", initialName: workspace.name, submitLabel: "保存", onSubmit: (name) => handleRenameWorkspace(workspace, name) })}
-          onDelete={(workspace) => setLibraryAction({ title: "删除工作空间？", description: `将删除“${workspace.name}”及其中所有图片和识别结果，此操作无法撤销。`, submitLabel: "删除空间", onSubmit: () => handleDeleteWorkspace(workspace) })}
+          onCreate={() =>
+            setLibraryAction({
+              title: "新建工作空间",
+              description: "创建一个空间来整理图片和识别结果。",
+              initialName: "",
+              submitLabel: "创建",
+              onSubmit: handleCreateWorkspace,
+            })
+          }
+          onRename={(workspace) =>
+            setLibraryAction({
+              title: "重命名工作空间",
+              description: "输入新的工作空间名称。",
+              initialName: workspace.name,
+              submitLabel: "保存",
+              onSubmit: (name) => handleRenameWorkspace(workspace, name),
+            })
+          }
+          onDelete={(workspace) =>
+            setLibraryAction({
+              title: "删除工作空间？",
+              description: `将删除“${workspace.name}”及其中所有图片和识别结果，此操作无法撤销。`,
+              submitLabel: "删除空间",
+              onSubmit: () => handleDeleteWorkspace(workspace),
+            })
+          }
         />
 
         <div className="relative flex min-w-0 flex-1">
@@ -580,7 +646,10 @@ function App() {
           <OcrFeed
             key={activeWorkspaceId}
             workspaceId={activeWorkspaceId}
-            contentReady={activeWorkspaceId !== null && loadedWorkspaceId === activeWorkspaceId}
+            contentReady={
+              activeWorkspaceId !== null &&
+              loadedWorkspaceId === activeWorkspaceId
+            }
             workspaceName={activeWorkspace?.name ?? "未选择工作空间"}
             documents={loadedWorkspaceId === activeWorkspaceId ? documents : []}
             selectedImageId={selectedImageId}
@@ -592,16 +661,33 @@ function App() {
             resultRef={resultRef}
             onSelect={(imageId) => {
               setSelectedImageId(imageId);
-              setError(documents.find((item) => item.imageId === imageId)?.errorMessage ?? null);
+              setError(
+                documents.find((item) => item.imageId === imageId)
+                  ?.errorMessage ?? null,
+              );
             }}
             onCopy={(document) => void copyDocument(document)}
-            onDelete={(document) => setLibraryAction({ title: "删除图片？", description: `将删除“${document.fileName}”及其识别结果，此操作无法撤销。`, submitLabel: "删除图片", onSubmit: () => handleDeleteDocument(document) })}
-            onImageError={() => setError("图片预览失败，图片可能已被移动或删除。")}
+            onDelete={(document) =>
+              setLibraryAction({
+                title: "删除图片？",
+                description: `将删除“${document.fileName}”及其识别结果，此操作无法撤销。`,
+                submitLabel: "删除图片",
+                onSubmit: () => handleDeleteDocument(document),
+              })
+            }
+            onImageError={() =>
+              setError("图片预览失败，图片可能已被移动或删除。")
+            }
           />
         </div>
       </div>
 
-      {libraryAction ? <LibraryActionDialog action={libraryAction} onClose={() => setLibraryAction(null)} /> : null}
+      {libraryAction ? (
+        <LibraryActionDialog
+          action={libraryAction}
+          onClose={() => setLibraryAction(null)}
+        />
+      ) : null}
 
       {shortcutsOpen ? (
         <ShortcutSettings
