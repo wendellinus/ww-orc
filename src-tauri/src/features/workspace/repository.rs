@@ -1,4 +1,4 @@
-use crate::persistence::{unix_timestamp, Database};
+use crate::infrastructure::persistence::{unix_timestamp, Database};
 use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 

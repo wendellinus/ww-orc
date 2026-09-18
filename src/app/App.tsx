@@ -12,12 +12,12 @@ import {
   recognizeImage,
   recognizeImageBytes,
   type OcrResult,
-} from "@/modules/ocr";
+} from "@/features/ocr";
 import {
   ShortcutSettings,
   useShortcuts,
   type Command,
-} from "@/modules/shortcuts";
+} from "@/features/shortcuts";
 import {
   createWorkspace,
   deleteWorkspace,
@@ -25,7 +25,7 @@ import {
   renameWorkspace,
   WorkspaceSidebar,
   type Workspace,
-} from "@/modules/workspace";
+} from "@/features/workspace";
 import { Button } from "@/shared/ui/button";
 
 import "./App.css";

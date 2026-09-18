@@ -26,12 +26,12 @@ App 命令定义 ─────────────┐
                  ShortcutStorage
 ```
 
-- `src/modules/shortcuts/model/keys.ts`：组合键规范化、精确修饰键匹配、平台映射、显示格式。
-- `src/modules/shortcuts/model/recording.ts`：录制按键的跨平台修饰键映射、物理标点编码及 IME、AltGraph、长按过滤。
-- `src/modules/shortcuts/model/config.ts`：版本化配置、持久化接口、作用域内冲突检测和覆盖合并。
-- `src/modules/shortcuts/model/registry.ts`：命令可用性、作用域路由、执行上下文快照、异步去重和取消。
-- `src/modules/shortcuts/hooks/use-shortcuts.ts`：应用壳中的单一键盘订阅；提交后更新命令回调，卸载时解绑并发出取消信号。只在应用壳调用一次，不在各个面板重复挂载。
-- `src/modules/shortcuts/ui/shortcut-settings.tsx`：录制用户级绑定、清除与恢复默认、显示录制和保存错误；原生模态对话框负责焦点限制与返回。
+- `src/features/shortcuts/model/keys.ts`：组合键规范化、精确修饰键匹配、平台映射、显示格式。
+- `src/features/shortcuts/model/recording.ts`：录制按键的跨平台修饰键映射、物理标点编码及 IME、AltGraph、长按过滤。
+- `src/features/shortcuts/model/config.ts`：版本化配置、持久化接口、作用域内冲突检测和覆盖合并。
+- `src/features/shortcuts/model/registry.ts`：命令可用性、作用域路由、执行上下文快照、异步去重和取消。
+- `src/features/shortcuts/hooks/use-shortcuts.ts`：应用壳中的单一键盘订阅；提交后更新命令回调，卸载时解绑并发出取消信号。只在应用壳调用一次，不在各个面板重复挂载。
+- `src/features/shortcuts/ui/shortcut-settings.tsx`：录制用户级绑定、清除与恢复默认、显示录制和保存错误；原生模态对话框负责焦点限制与返回。
 
 命令的 `id` 是稳定的业务标识，不应因文案或默认按键改变而变化。命令数组本身就是注册清单，功能模块可以导出各自的命令，在应用壳合并注册；移除条目即停止后续调度。
 

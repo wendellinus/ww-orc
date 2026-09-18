@@ -1,8 +1,9 @@
-use crate::persistence::{unix_timestamp, Database};
+use crate::infrastructure::persistence::{unix_timestamp, Database};
 use rusqlite::{params, OptionalExtension};
 use uuid::Uuid;
 
-use super::types::{DocumentRecord, StoredImage};
+use super::types::DocumentRecord;
+use crate::features::image_assets::types::StoredImage;
 
 const OCR_ENGINE_VERSION: &str = "paddle-ocr-rs/0.6.1";
 

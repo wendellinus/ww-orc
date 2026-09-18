@@ -1,6 +1,6 @@
 # Rust 日志
 
-配置集中在 `src-tauri/src/logging.rs`，使用 tauri-plugin-log 2.9.1 和 log。
+配置集中在 `src-tauri/src/infrastructure/logging.rs`，使用 tauri-plugin-log 2.9.1 和 log。
 
 - 开发：应用 debug，第三方 warn；终端和文件输出。
 - 发布：应用 info；只写文件。第三方日志不写文件，避免其原始错误泄露路径或内容。

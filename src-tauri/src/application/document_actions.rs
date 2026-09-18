@@ -1,40 +1,40 @@
-use tauri::{Manager, State};
+use tauri::Manager;
 
-use crate::persistence::Database;
+use crate::infrastructure::persistence::Database;
 
-use super::{
-    repository,
-    storage::AppStorage,
-    types::{DocumentRecord, OcrDocument},
+use crate::features::{
+    documents::{
+        repository,
+        types::{DocumentRecord, OcrDocument},
+    },
+    image_assets::storage::AppStorage,
 };
 
-#[tauri::command]
 pub fn list_documents(
     app: tauri::AppHandle,
-    database: State<'_, Database>,
-    storage: State<'_, AppStorage>,
+    database: &Database,
+    storage: &AppStorage,
     workspace_id: String,
 ) -> Result<Vec<OcrDocument>, String> {
-    crate::logging::operation_with_id("list_documents", &workspace_id, || {
-        repository::list(&database, &workspace_id)?
+    crate::infrastructure::logging::operation_with_id("list_documents", &workspace_id, || {
+        repository::list(database, &workspace_id)?
             .into_iter()
-            .map(|record| to_document(&app, &storage, record))
+            .map(|record| to_document(&app, storage, record))
             .collect()
     })
 }
 
-#[tauri::command]
 pub fn delete_document(
-    database: State<'_, Database>,
-    storage: State<'_, AppStorage>,
+    database: &Database,
+    storage: &AppStorage,
     workspace_id: String,
     image_id: String,
 ) -> Result<(), String> {
-    crate::logging::operation_with_id("delete_document", &image_id, || {
-        let relative_path = repository::relative_path(&database, &workspace_id, &image_id)?;
+    crate::infrastructure::logging::operation_with_id("delete_document", &image_id, || {
+        let relative_path = repository::relative_path(database, &workspace_id, &image_id)?;
         let staged = storage.stage_document_deletion(&relative_path)?;
 
-        match repository::delete(&database, &workspace_id, &image_id) {
+        match repository::delete(database, &workspace_id, &image_id) {
             Ok(()) => {
                 if let Some(staged) = staged {
                     staged

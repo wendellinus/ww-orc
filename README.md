@@ -11,7 +11,7 @@ This template should help get you started developing with Tauri, React and Types
 ```text
 src/
 ├─ app/                 # 应用壳、全局样式与模块组装
-├─ modules/             # 按业务能力组织
+├─ features/             # 按业务能力组织
 │  └─ <module>/
 │     ├─ model/         # 领域状态和纯业务逻辑
 │     ├─ hooks/         # React 接入
@@ -23,7 +23,7 @@ src/
 
 应用层只通过模块的 `index.ts` 使用公开能力。模块内部可使用相对路径，但其他模块不应直接导入其 `model/`、`hooks/` 或 `ui/`。只有真正跨业务复用的代码才能进入 `shared/`。
 
-测试与所属业务模块放在一起，统一命名为 `src/modules/<module>/test/*.test.mjs`，由 `pnpm test` 自动发现。不要重新建立根级 `tests/`，也不要为空的未来功能预建目录；当前工作空间与 OCR 分别由 `modules/workspace`、`modules/ocr` 提供公共入口。
+测试与所属业务模块放在一起，统一命名为 `src/features/<module>/test/*.test.mjs`，由 `pnpm test` 自动发现。不要重新建立根级 `tests/`，也不要为空的未来功能预建目录；当前工作空间与 OCR 分别由 `features/workspace`、`features/ocr` 提供公共入口。
 
 Tauri/Rust 后端继续位于 `src-tauri/`，其业务模块使用 Rust 原生的 `mod.rs` 或同名模块文件组织。
 
@@ -39,3 +39,7 @@ Tauri/Rust 后端继续位于 `src-tauri/`，其业务模块使用 Rust 原生�
 - **快捷键设置**：打开快捷键配置窗口。
 
 开机启动建议在安装后的应用中开启，系统启动项绑定当前应用可执行文件路径。
+
+## 功能架构
+
+功能边界与目录见 [架构设计](docs/architecture.md)，接口见 [IPC 契约](docs/ipc-contracts.md)，数据关系见 [数据设计](docs/data-model.md)。
