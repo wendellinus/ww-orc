@@ -28,6 +28,11 @@ pub fn delete_workspace(
     workspace_id: String,
 ) -> Result<(), String> {
     crate::infrastructure::logging::operation_with_id("delete_workspace", &workspace_id, || {
+        if !crate::features::notes::repository::list(database, &workspace_id)?.is_empty()
+            || !crate::features::pins::repository::list(database, &workspace_id)?.is_empty()
+        {
+            return Err("该工作区还有便签或贴图，请先在桌面工具中删除这些对象".into());
+        }
         let staged = storage.stage_workspace_deletion(&workspace_id)?;
 
         match repository::delete(database, &workspace_id) {

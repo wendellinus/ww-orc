@@ -9,6 +9,7 @@ use crate::{
 
 #[tauri::command]
 pub fn ocr_image(
+    window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, OcrEngineState>,
     database: tauri::State<'_, Database>,
@@ -16,6 +17,7 @@ pub fn ocr_image(
     workspace_id: String,
     path: String,
 ) -> Result<OcrDocument, String> {
+    crate::ipc::authorization::main_only(&window)?;
     ocr_actions::recognize_path(
         &app,
         &state,
@@ -28,12 +30,14 @@ pub fn ocr_image(
 
 #[tauri::command]
 pub fn ocr_image_bytes(
+    window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     state: tauri::State<'_, OcrEngineState>,
     database: tauri::State<'_, Database>,
     storage: tauri::State<'_, AppStorage>,
     request: tauri::ipc::Request,
 ) -> Result<OcrDocument, String> {
+    crate::ipc::authorization::main_only(&window)?;
     let workspace_id = request
         .headers()
         .get("x-workspace-id")

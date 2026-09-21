@@ -4,6 +4,11 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { startCapture } from "@/features/capture";
+import { createNote } from "@/features/notes";
+import { createPin, pasteClipboardPin } from "@/features/pins";
+import { DesktopTools } from "./ui/desktop-tools";
 
 import {
   deleteDocument,
@@ -58,6 +63,8 @@ function App() {
   const resultRef = useRef<HTMLParagraphElement>(null);
   const draggedImagePath = useRef<string | null>(null);
 
+  const [desktopManagerOpen, setDesktopManagerOpen] = useState(false);
+  const captureBusy = useRef(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [libraryAction, setLibraryAction] = useState<LibraryAction | null>(
     null,
@@ -515,7 +522,99 @@ function App() {
     }
   }
 
+  async function capture() {
+    if (!activeWorkspaceId || captureBusy.current) return;
+    captureBusy.current = true;
+    try {
+      await startCapture(activeWorkspaceId);
+    } catch (e) {
+      setError(`截图失败：${String(e)}`);
+    } finally {
+      captureBusy.current = false;
+    }
+  }
+  async function note() {
+    if (!activeWorkspaceId) return;
+    try {
+      await createNote(activeWorkspaceId);
+    } catch (e) {
+      setError(`创建便签失败：${String(e)}`);
+    }
+  }
+  async function pin() {
+    if (!selectedDocument) return;
+    try {
+      await createPin(selectedDocument.imageId);
+    } catch (e) {
+      setError(`贴图失败：${String(e)}`);
+    }
+  }
+  useEffect(() => {
+    if (!desktop) return;
+    let disposed = false;
+    const stops: (() => void)[] = [];
+    const bind = (promise: Promise<() => void>) => {
+      void promise
+        .then((stop) => {
+          if (disposed) stop();
+          else stops.push(stop);
+        })
+        .catch((e) => {
+          if (!disposed) setError(String(e));
+        });
+    };
+    bind(listen<string>("desktop:error", (e) => setError(e.payload)));
+    bind(
+      listen<string>("ocr:changed", (e) => {
+        if (e.payload !== activeWorkspaceId) return;
+        void Promise.all([listDocuments(e.payload), listWorkspaces()])
+          .then(([items, spaces]) => {
+            if (disposed) return;
+            setDocuments(items);
+            setWorkspaces(spaces);
+            setSelectedImageId(items[items.length - 1]?.imageId ?? null);
+          })
+          .catch((e) => {
+            if (!disposed) setError(String(e));
+          });
+      }),
+    );
+    return () => {
+      disposed = true;
+      stops.forEach((stop) => stop());
+    };
+  }, [desktop, activeWorkspaceId]);
+
   const commands: Command[] = [
+    {
+      id: "capture.start",
+      title: "截图",
+      scope: "app",
+      global: true,
+      shortcut: "F1",
+      enabled: () => desktop && Boolean(activeWorkspaceId),
+      run: capture,
+    },
+    {
+      id: "pins.pasteClipboard",
+      title: "贴图到桌面",
+      scope: "app",
+      global: true,
+      shortcut: "F3",
+      enabled: () => desktop && Boolean(activeWorkspaceId),
+      run: async () => {
+        if (activeWorkspaceId) await pasteClipboardPin(activeWorkspaceId);
+      },
+    },
+    {
+      id: "notes.create",
+      title: "新建便签",
+      scope: "app",
+      global: true,
+      shortcut: "Mod+Shift+N",
+      enabled: () => desktop && Boolean(activeWorkspaceId),
+      run: note,
+    },
     {
       id: "ocr.copyText",
       title: "复制识别内容",
@@ -566,7 +665,9 @@ function App() {
     {
       workspaceId: activeWorkspaceId,
       scopes:
-        shortcutsOpen || libraryAction ? ["dialog"] : ["app", "workspace"],
+        shortcutsOpen || libraryAction || desktopManagerOpen
+          ? ["dialog"]
+          : ["app", "workspace"],
     },
     setError,
   );
@@ -588,6 +689,17 @@ function App() {
           void shortcuts.execute("window.toggleAlwaysOnTop")
         }
         onWindowAction={(action) => void handleWindowAction(action)}
+      />
+
+      <DesktopTools
+        desktop={desktop}
+        workspaceId={activeWorkspaceId}
+        imageId={selectedDocument?.imageId ?? null}
+        onCapture={() => void shortcuts.execute("capture.start")}
+        onNote={() => void shortcuts.execute("notes.create")}
+        onPin={() => void pin()}
+        onError={setError}
+        onManagerChange={setDesktopManagerOpen}
       />
 
       <div className="flex min-h-0 flex-1">

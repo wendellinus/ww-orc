@@ -23,6 +23,26 @@ impl AppStorage {
         Ok(Self { root })
     }
 
+    pub fn capture_path(&self, session: &str, monitor: u32) -> PathBuf {
+        self.root
+            .join("temp")
+            .join(format!("capture-{session}-{monitor}.png"))
+    }
+
+    pub fn store_rgba(
+        &self,
+        workspace: &str,
+        image: &image::RgbaImage,
+    ) -> Result<StoredImage, String> {
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut buffer, ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        let mut stored = self.store_bytes(workspace, buffer.get_ref())?;
+        stored.original_name = "截图.png".into();
+        Ok(stored)
+    }
+
     pub fn store_path(&self, workspace_id: &str, source: &Path) -> Result<StoredImage, String> {
         validate_workspace_id(workspace_id)?;
         if !source.is_file() {

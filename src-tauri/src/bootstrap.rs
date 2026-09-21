@@ -49,9 +49,32 @@ pub fn run() {
 
             app.manage(database);
             app.manage(storage);
+            crate::application::tray_actions::init(app.handle())?;
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = crate::application::desktop_actions::restore(&handle) {
+                    log::error!("desktop_restore_failed");
+                    use tauri::Emitter;
+                    let _ = handle.emit_to(
+                        "main",
+                        "desktop:error",
+                        format!("恢复桌面窗口失败：{error}"),
+                    );
+                }
+            });
             log::info!("app_ready");
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .manage(crate::features::capture::session::CaptureState::default())
+        .manage(crate::application::desktop_actions::QuitState::default())
         .manage(OcrEngineState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -64,6 +87,27 @@ pub fn run() {
             ipc::commands::documents::delete_document,
             ipc::commands::ocr::ocr_image,
             ipc::commands::ocr::ocr_image_bytes,
+            ipc::commands::desktop::list_desktop_items,
+            ipc::commands::desktop::create_note,
+            ipc::commands::desktop::get_note,
+            ipc::commands::desktop::update_note,
+            ipc::commands::desktop::create_pin,
+            ipc::commands::desktop::paste_clipboard_pin,
+            ipc::commands::desktop::copy_pin_image,
+            ipc::commands::desktop::get_pin,
+            ipc::commands::desktop::open_desktop_object,
+            ipc::commands::desktop::close_desktop_object,
+            ipc::commands::desktop::delete_desktop_object,
+            ipc::commands::desktop::set_object_topmost,
+            ipc::commands::desktop::update_pin_zoom,
+            ipc::commands::desktop::recognize_pin,
+            ipc::commands::desktop::window_ready_to_quit,
+            ipc::commands::desktop::cancel_desktop_quit,
+            ipc::commands::desktop::request_desktop_quit,
+            ipc::commands::capture::start_capture,
+            ipc::commands::capture::get_capture_snapshot,
+            ipc::commands::capture::cancel_capture,
+            ipc::commands::capture::finish_capture,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|_| {

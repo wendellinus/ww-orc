@@ -31,6 +31,17 @@ pub fn delete_document(
     image_id: String,
 ) -> Result<(), String> {
     crate::infrastructure::logging::operation_with_id("delete_document", &image_id, || {
+        let count: i64 = database
+            .connection()?
+            .query_row(
+                "SELECT count(*) FROM pins WHERE image_id=?1",
+                [&image_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if count > 0 {
+            return Err("这张图片正在被贴图引用，请先删除对应贴图".into());
+        }
         let relative_path = repository::relative_path(database, &workspace_id, &image_id)?;
         let staged = storage.stage_document_deletion(&relative_path)?;
 

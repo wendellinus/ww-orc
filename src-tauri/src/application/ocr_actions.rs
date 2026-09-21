@@ -162,3 +162,21 @@ fn ensure_workspace(database: &Database, workspace_id: &str) -> Result<(), Strin
     }
     Ok(())
 }
+
+pub fn recognize_asset(app: &tauri::AppHandle, image_id: &str) -> Result<OcrDocument, String> {
+    let database = app.state::<Database>();
+    let storage = app.state::<AppStorage>();
+    let image = crate::features::image_assets::repository::get(&database, &storage, image_id)?;
+    let run_id = document_repository::create_existing_run(&database, &image)?;
+    recognize_run(&database, &run_id, || {
+        model_dir(app).and_then(|dir| {
+            app.state::<OcrEngineState>()
+                .recognize(&dir, &image.absolute_path)
+        })
+    })?;
+    let record = document_repository::list(&database, &image.workspace_id)?
+        .into_iter()
+        .find(|r| r.image_id == image_id)
+        .ok_or("识别记录不存在")?;
+    super::document_actions::to_document(app, &storage, record)
+}

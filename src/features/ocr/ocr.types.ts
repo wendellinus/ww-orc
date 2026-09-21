@@ -3,7 +3,7 @@ export type OcrResult = {
   workspaceId: string;
   fileName: string;
   imagePath: string;
-  status: "pending" | "completed" | "failed";
+  status: "unrecognized" | "pending" | "completed" | "failed";
   text: string;
   errorMessage: string | null;
   createdAt: number;

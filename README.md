@@ -43,3 +43,7 @@ Tauri/Rust 后端继续位于 `src-tauri/`，其业务模块使用 Rust 原生�
 ## 功能架构
 
 功能边界与目录见 [架构设计](docs/architecture.md)，接口见 [IPC 契约](docs/ipc-contracts.md)，数据关系见 [数据设计](docs/data-model.md)。
+
+## 截图、贴图与便签
+
+重启桌面应用后，顶部工具栏提供截图、新建便签、贴图选中图片和管理入口。默认 F1 截图、F3 贴图，新建便签 Ctrl+Shift+N，可在设置中修改。详见 [使用说明](docs/desktop-tools.md)。

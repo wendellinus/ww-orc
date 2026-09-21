@@ -1,11 +1,4 @@
-import {
-  Copy,
-  Minus,
-  Pin,
-  Search,
-  Square,
-  X,
-} from "lucide-react";
+import { Copy, Minus, Pin, Search, Square, X } from "lucide-react";
 
 import { SettingsMenu } from "./settings-menu";
 
@@ -36,7 +29,10 @@ export function WindowTitleBar({
   onWindowAction,
 }: Props) {
   return (
-    <header data-tauri-drag-region className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-300/70 bg-zinc-100/95 px-3 dark:border-zinc-700 dark:bg-zinc-900/95">
+    <header
+      data-tauri-drag-region
+      className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-300/70 bg-zinc-100/95 px-3 dark:border-zinc-700 dark:bg-zinc-900/95"
+    >
       <div
         className="flex min-w-44 flex-1 items-center self-stretch select-none"
         data-tauri-drag-region
@@ -46,15 +42,17 @@ export function WindowTitleBar({
             W
           </span>
           <div className="leading-none">
-            <p className="font-heading text-sm font-semibold tracking-tight">ww-ocr</p>
-            <p className="mt-1 text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-              workspace
+            <p className="font-heading text-sm font-semibold tracking-tight">
+              ww-ocr
             </p>
           </div>
         </div>
       </div>
 
-      <label className="relative hidden w-72 shrink sm:block" htmlFor="app-search">
+      <label
+        className="relative hidden w-72 shrink sm:block"
+        htmlFor="app-search"
+      >
         <Search
           className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
           aria-hidden="true"
@@ -69,8 +67,17 @@ export function WindowTitleBar({
         />
       </label>
 
-      <div data-tauri-drag-region className="flex flex-1 items-center self-stretch justify-end gap-1" role="group" aria-label="窗口操作">
-        <SettingsMenu desktop={desktop} onOpenShortcuts={onOpenShortcuts} onError={onError} />
+      <div
+        data-tauri-drag-region
+        className="flex flex-1 items-center self-stretch justify-end gap-1"
+        role="group"
+        aria-label="窗口操作"
+      >
+        <SettingsMenu
+          desktop={desktop}
+          onOpenShortcuts={onOpenShortcuts}
+          onError={onError}
+        />
         <Button
           size="icon-sm"
           variant="ghost"
@@ -106,7 +113,11 @@ export function WindowTitleBar({
           aria-label={maximized ? "还原窗口" : "最大化"}
           title={maximized ? "还原窗口" : "最大化"}
         >
-          {maximized ? <Copy aria-hidden="true" /> : <Square aria-hidden="true" />}
+          {maximized ? (
+            <Copy aria-hidden="true" />
+          ) : (
+            <Square aria-hidden="true" />
+          )}
         </Button>
         <Button
           size="icon-sm"

@@ -1,37 +1,33 @@
 # 数据设计
 
-## 当前结构
+数据库位于 app_local_data_dir/database/app.sqlite；图片位于 workspaces/<workspace-id>/originals/<image-id>.<extension>；截图预览及删除暂存位于 temp。已有数据不搬迁。
 
-数据库保留 app_local_data_dir/database/app.sqlite；图片保留 workspaces/<workspace-id>/originals/<image-id>.<extension>；临时文件位于 temp。本轮不迁移用户数据。
+## 已执行的 schema
 
-版本 1 SQL 提取至 src-tauri/migrations/001_initial.sql，语义和 user_version 不变，已有数据库不重复执行迁移。保留 workspaces/images/ocr_runs、外键与 WAL。
+版本 1：001_initial.sql，workspaces/images/ocr_runs，保持原始结构。
 
-当前图片元数据与 pending run 在 documents repository 原子入库。下一步拆为 image_assets 独立图片入库和 ocr 独立创建 run，不建立同用途重复表。
+版本 2：002_desktop.sql，新增 notes/pins/window_states，以事务升级，重复启动幂等。高于应用支持版本的数据库明确拒绝。
 
-## 后续版本 2（尚未执行）
-
-| 表或扩展 | 字段与约束 |
+| 表 | 归属与约束 |
 | --- | --- |
-| images 扩展 | source：import/clipboard/capture |
-| pins | id、workspace_id、image_id、zoom、is_open、created_at、updated_at；zoom > 0，图片外键 RESTRICT |
-| notes | id、workspace_id、text、color、revision、is_open、created_at、updated_at；revision >= 0 |
-| window_states | object_kind + object_id 主键，monitor_id、x、y、width、height、always_on_top；尺寸 > 0 |
-| ocr_runs 扩展 | queued/running/completed/failed/cancelled、revision；保留 engine_version |
-| ocr_blocks | run_id + block_index 主键，text、confidence、polygon_json；删除 run 时级联 |
-| settings | key 主键，value_json、updated_at |
+| images | 原图元数据；截图可以独立入库，不必创建 OCR 记录 |
+| ocr_runs | 每次识别单独记录，引用已有图像；pending/completed/failed |
+| notes | 正文、颜色、revision、is_open、时间；工作区外键级联 |
+| pins | image_id、zoom、is_open、时间；图片外键 RESTRICT；zoom 0.1 至 5 |
+| window_states | object_kind + object_id 主键；物理像素位置和尺寸、topmost |
 
-版本 1 不修改，后续用有序事务迁移；数据库版本高于应用支持版本时明确拒绝。window_states 多态归属由应用事务维护，不存在跨 pins/notes 的 SQL 外键。删除对象时同事务删除状态，状态更新先检查对象仍存在。
+便签 revision 条件 UPDATE 防止旧草稿覆盖新内容。图片像素、OCR 输入和窗口物理尺寸保持明确含义；前端选区通过屏幕比例映射原图，图片 100% 显示时按窗口 devicePixelRatio 转换 CSS 尺寸。
 
-窗口使用逻辑坐标，OCR polygon 使用原图物理像素。贴图穿透不持久化。notes revision 使用条件 UPDATE，冲突不覆盖。
+window_states 由窗口基础模块维护，对象删除与状态删除在同一事务完成。恢复时检查当前显示器，原位置不再可访问则使用居中位置。穿透尚未提供。
 
-## 资源生命周期
+## 生命周期
 
-导入先写临时文件并校验，移动到最终路径后插入元数据，入库失败清理新文件。OCR 仅引用已存在 imageId，失败保留图片和失败记录。
+文件导入先写临时文件，移动到最终路径，再入库。入库失败清理新文件。OCR 失败保留图片及失败记录。已有图像的新 OCR run 不重复插入 images。
 
-被 pins 引用的图片不可删除。工作区删除先处理窗口和任务，再在明确操作中删除所属对象。关闭窗口不删除图片。
+贴图引用阻止原图删除，删除检查发生在文件暂存之前。工作区含便签或贴图时拒绝直接删除，提示先删除所属对象。关闭窗口不删除对象和图片。
 
-复用现有删除暂存机制：文件移到 temp → 数据库事务删除 → 清理暂存；事务失败恢复原文件是数据一致性处理，不是备用实现。清理失败明确报错。
+关闭对象窗口保存最终几何状态并设置 is_open=false；退出应用保存草稿与几何状态，但保持 is_open，使下次启动恢复这些对象。退出过程中 Destroyed 事件不修改恢复标记。
 
-启动恢复 is_open 的 pins/notes，校正到当前显示器。截图和 OCR 结果窗口不恢复。遗留 queued/running OCR 标记 failed 并记录进程中断，不自动重试推理。
+删除仍使用现有文件暂存机制保证数据库失败时能恢复文件，清理失败明确报告。
 
-迁移验证覆盖旧版本升级、重复启动、引用约束和事务失败清理。
+验证覆盖版本 1 升级、幂等迁移、便签 revision、颜色检查和图片引用约束。

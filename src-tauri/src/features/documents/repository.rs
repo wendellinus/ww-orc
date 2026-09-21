@@ -15,25 +15,7 @@ pub fn create_pending(database: &Database, image: &StoredImage) -> Result<String
         .transaction()
         .map_err(|error| format!("启动图片保存事务失败: {error}"))?;
 
-    transaction
-        .execute(
-            "INSERT INTO images (
-                id, workspace_id, original_name, relative_path, mime_type,
-                byte_size, width, height, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                &image.id,
-                &image.workspace_id,
-                &image.original_name,
-                &image.relative_path,
-                &image.mime_type,
-                image.byte_size,
-                image.width,
-                image.height,
-                timestamp,
-            ],
-        )
-        .map_err(|error| format!("保存图片记录失败: {error}"))?;
+    crate::features::image_assets::repository::insert(&transaction, image)?;
 
     transaction
         .execute(
@@ -55,6 +37,12 @@ pub fn create_pending(database: &Database, image: &StoredImage) -> Result<String
         .map_err(|error| format!("提交图片保存事务失败: {error}"))?;
 
     Ok(run_id)
+}
+
+pub fn create_existing_run(database: &Database, image: &StoredImage) -> Result<String, String> {
+    let id = Uuid::new_v4().to_string();
+    database.connection()?.execute("INSERT INTO ocr_runs(id,workspace_id,image_id,status,engine_version,created_at) VALUES(?1,?2,?3,'pending',?4,?5)",params![id,image.workspace_id,image.id,OCR_ENGINE_VERSION,unix_timestamp()?]).map_err(|e|e.to_string())?;
+    Ok(id)
 }
 
 pub fn complete_run(database: &Database, run_id: &str, text: &str) -> Result<(), String> {
@@ -98,7 +86,7 @@ pub fn list(database: &Database, workspace_id: &str) -> Result<Vec<DocumentRecor
                 i.workspace_id,
                 i.original_name,
                 i.relative_path,
-                COALESCE(r.status, 'pending'),
+                COALESCE(r.status, 'unrecognized'),
                 COALESCE(r.text, ''),
                 r.error_message,
                 i.created_at

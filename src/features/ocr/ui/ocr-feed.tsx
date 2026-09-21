@@ -236,7 +236,7 @@ export function OcrFeed({
                           <MessageFooter className="w-full flex-wrap gap-x-2 gap-y-1 px-0">
                             <span className="min-w-0 flex-1 truncate font-medium" title={document.fileName}>{document.fileName}</span>
                             <span className={cn("shrink-0 text-muted-foreground", document.status === "failed" && "text-destructive")}>
-                              {document.status === "failed" ? "识别失败" : document.status === "pending" ? "待识别" : "已识别"}
+                              {document.status === "failed" ? "识别失败" : document.status === "unrecognized" ? "未识别" : document.status === "pending" ? "识别中" : "已识别"}
                             </span>
                             <time className="text-muted-foreground" dateTime={new Date(document.createdAt * 1000).toISOString()}>
                               {dateFormatter.format(document.createdAt * 1000)}
