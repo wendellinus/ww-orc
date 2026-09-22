@@ -414,6 +414,8 @@ export default function CaptureWindow({
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
         onPointerMove={(e) => {
+          const currentSnapshot = snapshot;
+          if (!currentSnapshot) return;
           const p = point(e);
           const active = interaction.current;
           if (!drawing.current || !active) {
@@ -424,19 +426,19 @@ export default function CaptureWindow({
             setSelection({
               ...active.start,
               x: Math.max(
-                snapshot.desktopX,
+                currentSnapshot.desktopX,
                 Math.min(
-                  snapshot.desktopX +
-                    snapshot.desktopWidth -
+                  currentSnapshot.desktopX +
+                    currentSnapshot.desktopWidth -
                     active.start.width,
                   active.start.x + p.x - active.origin.x,
                 ),
               ),
               y: Math.max(
-                snapshot.desktopY,
+                currentSnapshot.desktopY,
                 Math.min(
-                  snapshot.desktopY +
-                    snapshot.desktopHeight -
+                  currentSnapshot.desktopY +
+                    currentSnapshot.desktopHeight -
                     active.start.height,
                   active.start.y + p.y - active.origin.y,
                 ),
