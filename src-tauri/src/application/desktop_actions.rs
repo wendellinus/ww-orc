@@ -72,11 +72,7 @@ pub fn create_pin(app: &tauri::AppHandle, image_id: &str) -> Result<pins::model:
         image_id,
     )? {
         Some(pin) => pin,
-        None => pins::repository::create(
-            &app.state::<Database>(),
-            &image.workspace_id,
-            image_id,
-        )?,
+        None => pins::repository::create(&app.state::<Database>(), &image.workspace_id, image_id)?,
     };
     if let Err(e) = open(app, "pin", &pin.id) {
         pins::repository::set_open(&app.state::<Database>(), &pin.id, false)?;
@@ -302,7 +298,8 @@ pub fn paste_clipboard_pin(
         clipboard.rgba().to_vec(),
     )
     .ok_or("剪贴板图片数据无效")?;
-    if let Some(pin) = find_pin_with_pixels(app, workspace, &rgba)? {
+    let pixel_sha256 = image_assets::storage::pixel_sha256(&rgba);
+    if let Some(pin) = find_pin_with_hash(app, workspace, &pixel_sha256)? {
         open(app, "pin", &pin.id)?;
         changed(app);
         return Ok(Some(pin));
@@ -321,24 +318,31 @@ pub fn paste_clipboard_pin(
     Ok(Some(pin))
 }
 
-fn find_pin_with_pixels(
+fn find_pin_with_hash(
     app: &tauri::AppHandle,
     workspace: &str,
-    expected: &image::RgbaImage,
+    expected_hash: &str,
 ) -> Result<Option<pins::model::Pin>, String> {
     let database = app.state::<Database>();
+    if let Some(pin) = pins::repository::get_by_pixel_sha256(&database, workspace, expected_hash)? {
+        return Ok(Some(pin));
+    }
+
+    // 旧数据库记录没有哈希。只在首次遇到时解码并回填，后续全部走索引。
     let storage = app.state::<AppStorage>();
     for pin in pins::repository::list(&database, workspace)? {
         let Ok(stored) = image_assets::repository::get(&database, &storage, &pin.image_id) else {
             continue;
         };
+        if stored.pixel_sha256.is_some() {
+            continue;
+        }
         let Ok(actual) = image::open(&stored.absolute_path).map(|image| image.to_rgba8()) else {
             continue;
         };
-        if actual.width() == expected.width()
-            && actual.height() == expected.height()
-            && actual.as_raw() == expected.as_raw()
-        {
+        let actual_hash = image_assets::storage::pixel_sha256(&actual);
+        image_assets::repository::set_pixel_sha256(&database, &stored.id, &actual_hash)?;
+        if actual_hash == expected_hash {
             return Ok(Some(pin));
         }
     }

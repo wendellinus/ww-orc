@@ -42,7 +42,7 @@ export default function CaptureWindow({
 }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [previewPixels, setPreviewPixels] = useState<ArrayBuffer | null>(null);
+  const [previewBytes, setPreviewBytes] = useState<ArrayBuffer | null>(null);
   const [rect, setRect] = useState<Rect | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,7 +87,7 @@ export default function CaptureWindow({
       selectionOwner.current = null;
       hovered.current = null;
       setSnapshot(null);
-      setPreviewPixels(null);
+      setPreviewBytes(null);
       setRect(null);
       setSelectionOwnerId(null);
       setHoverRect(null);
@@ -104,7 +104,7 @@ export default function CaptureWindow({
       hovered.current = null;
       setSessionId(null);
       setSnapshot(null);
-      setPreviewPixels(null);
+      setPreviewBytes(null);
       setRect(null);
       setSelectionOwnerId(null);
       setHoverRect(null);
@@ -147,7 +147,7 @@ export default function CaptureWindow({
       .then(([nextSnapshot, bytes]) => {
         if (!disposed) {
           setSnapshot(nextSnapshot);
-          setPreviewPixels(bytes);
+          setPreviewBytes(bytes);
         }
       })
       .catch((e) => {
@@ -178,29 +178,34 @@ export default function CaptureWindow({
     }
   }
   useEffect(() => {
-    if (!snapshot || !previewPixels || !canvas.current) return;
-    try {
-      canvas.current.width = snapshot.width;
-      canvas.current.height = snapshot.height;
-      const context = canvas.current.getContext("2d");
-      if (!context) throw new Error("无法创建截图画布");
-      context.putImageData(
-        new ImageData(
-          new Uint8ClampedArray(previewPixels),
-          snapshot.width,
-          snapshot.height,
-        ),
-        0,
-        0,
-      );
-      // putImageData 同步写入 Canvas；完成后才报告就绪，由 Rust 统一显示
-      // 所有屏幕，避免暴露未准备好的黑色窗口。
-      void reveal();
-    } catch (cause) {
-      setError(`截图预览绘制失败：${String(cause)}`);
-      void cancel();
-    }
-  }, [snapshot, previewPixels, sessionId, monitorId]);
+    if (!snapshot || !previewBytes || !canvas.current) return;
+    let disposed = false;
+    const target = canvas.current;
+    const blob = new Blob([previewBytes], { type: "image/png" });
+    void createImageBitmap(blob)
+      .then((bitmap) => {
+        if (disposed) {
+          bitmap.close();
+          return;
+        }
+        target.width = snapshot.width;
+        target.height = snapshot.height;
+        const context = target.getContext("2d");
+        if (!context) throw new Error("无法创建截图画布");
+        context.drawImage(bitmap, 0, 0);
+        bitmap.close();
+        // PNG 在浏览器侧解码后才报告就绪，由 Rust 统一显示全部窗口。
+        void reveal();
+      })
+      .catch((cause) => {
+        if (disposed) return;
+        setError(`截图预览绘制失败：${String(cause)}`);
+        void cancel();
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [snapshot, previewBytes, sessionId, monitorId]);
   function point(e: React.PointerEvent): Point {
     const bounds = selectionLayer.current?.getBoundingClientRect();
     if (!bounds || !snapshot) return { x: 0, y: 0 };
@@ -389,7 +394,7 @@ export default function CaptureWindow({
         void cancel();
       }}
     >
-      {snapshot && previewPixels ? (
+      {snapshot && previewBytes ? (
         <canvas
           ref={canvas}
           className="capture-background"

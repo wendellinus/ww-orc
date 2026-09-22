@@ -10,4 +10,5 @@ pub struct StoredImage {
     pub byte_size: i64,
     pub width: i64,
     pub height: i64,
+    pub pixel_sha256: Option<String>,
 }

@@ -1,5 +1,7 @@
 use image::{GenericImageView, ImageFormat, ImageReader};
+use sha2::{Digest, Sha256};
 use std::{
+    fmt::Write as _,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -32,9 +34,20 @@ impl AppStorage {
         image
             .write_to(&mut buffer, ImageFormat::Png)
             .map_err(|e| e.to_string())?;
-        let mut stored = self.store_bytes(workspace, buffer.get_ref())?;
-        stored.original_name = "截图.png".into();
-        Ok(stored)
+        self.persist(
+            workspace,
+            "截图.png",
+            "png",
+            "image/png",
+            buffer.get_ref().len() as i64,
+            image.width(),
+            image.height(),
+            pixel_sha256(image),
+            |temporary_path| {
+                fs::write(temporary_path, buffer.get_ref())
+                    .map_err(|error| format!("写入截图失败: {error}"))
+            },
+        )
     }
 
     pub fn store_path(&self, workspace_id: &str, source: &Path) -> Result<StoredImage, String> {
@@ -59,9 +72,11 @@ impl AppStorage {
             .format()
             .ok_or_else(|| "无法识别图片格式".to_string())?;
         let (extension, mime_type) = supported_format(format)?;
-        let (width, height) = reader
-            .into_dimensions()
-            .map_err(|error| format!("读取图片尺寸失败: {error}"))?;
+        let decoded = reader
+            .decode()
+            .map_err(|error| format!("解析图片失败: {error}"))?;
+        let (width, height) = decoded.dimensions();
+        let pixel_sha256 = pixel_sha256(&decoded.to_rgba8());
 
         let original_name = source
             .file_name()
@@ -77,6 +92,7 @@ impl AppStorage {
             byte_size as i64,
             width,
             height,
+            pixel_sha256,
             |temporary_path| {
                 fs::copy(source, temporary_path)
                     .map(|_| ())
@@ -100,6 +116,7 @@ impl AppStorage {
         let decoded = image::load_from_memory_with_format(bytes, format)
             .map_err(|error| format!("解析剪贴板图片失败: {error}"))?;
         let (width, height) = decoded.dimensions();
+        let pixel_sha256 = pixel_sha256(&decoded.to_rgba8());
 
         self.persist(
             workspace_id,
@@ -109,6 +126,7 @@ impl AppStorage {
             bytes.len() as i64,
             width,
             height,
+            pixel_sha256,
             |temporary_path| {
                 fs::write(temporary_path, bytes)
                     .map_err(|error| format!("写入剪贴板图片失败: {error}"))
@@ -157,6 +175,7 @@ impl AppStorage {
         byte_size: i64,
         width: u32,
         height: u32,
+        pixel_sha256: String,
         write: impl FnOnce(&Path) -> Result<(), String>,
     ) -> Result<StoredImage, String> {
         let id = Uuid::new_v4().to_string();
@@ -190,6 +209,7 @@ impl AppStorage {
             byte_size,
             width: i64::from(width),
             height: i64::from(height),
+            pixel_sha256: Some(pixel_sha256),
         })
     }
 
@@ -206,6 +226,20 @@ impl AppStorage {
 
         Ok(Some(StagedDeletion { original, staged }))
     }
+}
+
+pub fn pixel_sha256(image: &image::RgbaImage) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ww-ocr:rgba8:v1");
+    hasher.update(image.width().to_be_bytes());
+    hasher.update(image.height().to_be_bytes());
+    hasher.update(image.as_raw());
+    let digest = hasher.finalize();
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(&mut encoded, "{byte:02x}");
+    }
+    encoded
 }
 
 pub struct StagedDeletion {

@@ -30,17 +30,13 @@ pub fn run() {
                         if event.state != ShortcutState::Pressed {
                             return;
                         }
-                        let binding = app
-                            .state::<crate::features::capture::session::NativeCaptureShortcut>();
-                        let workspace_id = binding
-                            .0
-                            .lock()
-                            .ok()
-                            .and_then(|binding| {
-                                (binding.shortcut_id == Some(shortcut.id()))
-                                    .then(|| binding.workspace_id.clone())
-                                    .flatten()
-                            });
+                        let binding =
+                            app.state::<crate::features::capture::session::NativeCaptureShortcut>();
+                        let workspace_id = binding.0.lock().ok().and_then(|binding| {
+                            (binding.shortcut_id == Some(shortcut.id()))
+                                .then(|| binding.workspace_id.clone())
+                                .flatten()
+                        });
                         let Some(workspace_id) = workspace_id else {
                             return;
                         };
@@ -49,10 +45,7 @@ pub fn run() {
                         let handle = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             if let Err(error) =
-                                crate::application::capture_actions::toggle(
-                                    &handle,
-                                    &workspace_id,
-                                )
+                                crate::application::capture_actions::toggle(&handle, &workspace_id)
                             {
                                 let _ = handle.emit_to("main", "desktop:error", error);
                             }

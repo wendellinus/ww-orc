@@ -1,7 +1,7 @@
 use crate::{
     application::capture_actions as actions,
     features::capture::{
-        coordinates::Selection,
+        composition::Selection,
         session::{NativeCaptureBinding, NativeCaptureShortcut, SnapshotInfo},
     },
 };

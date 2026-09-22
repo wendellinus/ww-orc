@@ -2,12 +2,52 @@ use super::{storage::AppStorage, types::StoredImage};
 use crate::infrastructure::persistence::{unix_timestamp, Database};
 use rusqlite::{params, Connection, OptionalExtension};
 pub fn insert(connection: &Connection, image: &StoredImage) -> Result<(), String> {
-    connection.execute("INSERT INTO images(id,workspace_id,original_name,relative_path,mime_type,byte_size,width,height,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![image.id,image.workspace_id,image.original_name,image.relative_path,image.mime_type,image.byte_size,image.width,image.height,unix_timestamp()?]).map_err(|e|format!("保存图片记录失败: {e}"))?;
+    connection
+        .execute(
+            "INSERT INTO images(
+            id, workspace_id, original_name, relative_path, mime_type,
+            byte_size, width, height, pixel_sha256, created_at
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![
+                image.id,
+                image.workspace_id,
+                image.original_name,
+                image.relative_path,
+                image.mime_type,
+                image.byte_size,
+                image.width,
+                image.height,
+                image.pixel_sha256,
+                unix_timestamp()?
+            ],
+        )
+        .map_err(|e| format!("保存图片记录失败: {e}"))?;
     Ok(())
 }
 pub fn get(db: &Database, storage: &AppStorage, id: &str) -> Result<StoredImage, String> {
     let c = db.connection()?;
-    let data=c.query_row("SELECT workspace_id,original_name,relative_path,mime_type,byte_size,width,height FROM images WHERE id=?1",[id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,i64>(4)?,r.get::<_,i64>(5)?,r.get::<_,i64>(6)?))).optional().map_err(|e|e.to_string())?.ok_or_else(||"图片不存在".to_string())?;
+    let data = c
+        .query_row(
+            "SELECT workspace_id, original_name, relative_path, mime_type,
+                    byte_size, width, height, pixel_sha256
+             FROM images WHERE id=?1",
+            [id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, i64>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "图片不存在".to_string())?;
     Ok(StoredImage {
         id: id.into(),
         workspace_id: data.0,
@@ -18,5 +58,16 @@ pub fn get(db: &Database, storage: &AppStorage, id: &str) -> Result<StoredImage,
         byte_size: data.4,
         width: data.5,
         height: data.6,
+        pixel_sha256: data.7,
     })
+}
+
+pub fn set_pixel_sha256(db: &Database, id: &str, hash: &str) -> Result<(), String> {
+    db.connection()?
+        .execute(
+            "UPDATE images SET pixel_sha256=?2 WHERE id=?1",
+            params![id, hash],
+        )
+        .map_err(|error| format!("更新图片哈希失败: {error}"))?;
+    Ok(())
 }

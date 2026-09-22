@@ -106,6 +106,7 @@ mod run_tests {
             byte_size: 1,
             width: 1,
             height: 1,
+            pixel_sha256: None,
         };
         let run_id = document_repository::create_pending(&database, &image).unwrap();
         let error = "获取应用资源目录失败: private path".to_string();

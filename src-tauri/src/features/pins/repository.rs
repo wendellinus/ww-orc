@@ -32,11 +32,7 @@ pub fn get(db: &Database, id: &str) -> Result<Pin, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "贴图不存在".into())
 }
-pub fn get_by_image(
-    db: &Database,
-    workspace: &str,
-    image: &str,
-) -> Result<Option<Pin>, String> {
+pub fn get_by_image(db: &Database, workspace: &str, image: &str) -> Result<Option<Pin>, String> {
     db.connection()?
         .query_row(
             "SELECT id,workspace_id,image_id,zoom,is_open,created_at
@@ -45,6 +41,25 @@ pub fn get_by_image(
              ORDER BY created_at ASC
              LIMIT 1",
             params![workspace, image],
+            row,
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+}
+pub fn get_by_pixel_sha256(
+    db: &Database,
+    workspace: &str,
+    pixel_sha256: &str,
+) -> Result<Option<Pin>, String> {
+    db.connection()?
+        .query_row(
+            "SELECT p.id,p.workspace_id,p.image_id,p.zoom,p.is_open,p.created_at
+             FROM pins p
+             JOIN images i ON i.id=p.image_id
+             WHERE p.workspace_id=?1 AND i.pixel_sha256=?2
+             ORDER BY p.created_at ASC
+             LIMIT 1",
+            params![workspace, pixel_sha256],
             row,
         )
         .optional()
