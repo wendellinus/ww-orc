@@ -1,0 +1,2 @@
+ALTER TABLE ocr_runs
+ADD COLUMN blocks_json TEXT NOT NULL DEFAULT '[]';

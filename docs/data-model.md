@@ -8,10 +8,12 @@
 
 版本 2：002_desktop.sql，新增 notes/pins/window_states，以事务升级，重复启动幂等。高于应用支持版本的数据库明确拒绝。
 
+版本 3：003_ocr_blocks.sql，为每次 OCR 保存文字块文本及原图像素坐标；旧记录默认为空数组。
+
 | 表 | 归属与约束 |
 | --- | --- |
 | images | 原图元数据；截图可以独立入库，不必创建 OCR 记录 |
-| ocr_runs | 每次识别单独记录，引用已有图像；pending/completed/failed |
+| ocr_runs | 每次识别单独记录，引用已有图像；保存纯文本及文字块坐标；pending/completed/failed |
 | notes | 正文、颜色、revision、is_open、时间；工作区外键级联 |
 | pins | image_id、zoom、is_open、时间；图片外键 RESTRICT；zoom 0.1 至 5 |
 | window_states | object_kind + object_id 主键；物理像素位置和尺寸、topmost |

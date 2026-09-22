@@ -4,7 +4,7 @@ use crate::{
     features::{
         documents::{repository as document_repository, types::OcrDocument},
         image_assets::{storage::AppStorage, types::StoredImage},
-        ocr::engine::OcrEngineState,
+        ocr::{engine::OcrEngineState, types::OcrOutput},
     },
     infrastructure::{
         logging,
@@ -33,7 +33,7 @@ pub fn recognize_stored_image(
         }
     };
 
-    let text = recognize_run(database, &run_id, || {
+    let output = recognize_run(database, &run_id, || {
         model_dir(app).and_then(|directory| state.recognize(&directory, &image.absolute_path))
     })?;
     logging::operation("ocr_preview", || {
@@ -46,7 +46,8 @@ pub fn recognize_stored_image(
             file_name: image.original_name,
             image_path: image.absolute_path.to_string_lossy().into_owned(),
             status: "completed".to_string(),
-            text,
+            text: output.text,
+            blocks: output.blocks,
             error_message: None,
             created_at: unix_timestamp()?,
         })
@@ -56,20 +57,21 @@ pub fn recognize_stored_image(
 fn recognize_run(
     database: &Database,
     run_id: &str,
-    recognize: impl FnOnce() -> Result<String, String>,
-) -> Result<String, String> {
+    recognize: impl FnOnce() -> Result<OcrOutput, String>,
+) -> Result<OcrOutput, String> {
     let started = std::time::Instant::now();
     log::info!("ocr_started run_id={run_id}");
     match recognize() {
-        Ok(text) => {
-            document_repository::complete_run(database, run_id, &text).inspect_err(|_| {
-                log::error!("ocr_status_update_failed run_id={run_id} stage=complete");
-            })?;
+        Ok(output) => {
+            document_repository::complete_run(database, run_id, &output.text, &output.blocks)
+                .inspect_err(|_| {
+                    log::error!("ocr_status_update_failed run_id={run_id} stage=complete");
+                })?;
             log::info!(
                 "ocr_completed run_id={run_id} elapsed_ms={}",
                 started.elapsed().as_millis()
             );
-            Ok(text)
+            Ok(output)
         }
         Err(error) => {
             log::error!(
@@ -107,10 +109,8 @@ mod run_tests {
         };
         let run_id = document_repository::create_pending(&database, &image).unwrap();
         let error = "获取应用资源目录失败: private path".to_string();
-        assert_eq!(
-            recognize_run(&database, &run_id, || Err(error.clone())),
-            Err(error.clone())
-        );
+        let result = recognize_run(&database, &run_id, || Err(error.clone()));
+        assert!(matches!(result, Err(ref saved) if saved == &error));
         let (status, saved_error, finished): (String, String, Option<i64>) = database
             .connection()
             .unwrap()

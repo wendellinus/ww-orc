@@ -32,6 +32,24 @@ pub fn get(db: &Database, id: &str) -> Result<Pin, String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "贴图不存在".into())
 }
+pub fn get_by_image(
+    db: &Database,
+    workspace: &str,
+    image: &str,
+) -> Result<Option<Pin>, String> {
+    db.connection()?
+        .query_row(
+            "SELECT id,workspace_id,image_id,zoom,is_open,created_at
+             FROM pins
+             WHERE workspace_id=?1 AND image_id=?2
+             ORDER BY created_at ASC
+             LIMIT 1",
+            params![workspace, image],
+            row,
+        )
+        .optional()
+        .map_err(|e| e.to_string())
+}
 pub fn list(db: &Database, workspace: &str) -> Result<Vec<Pin>, String> {
     let c = db.connection()?;
     let mut s=c.prepare("SELECT id,workspace_id,image_id,zoom,is_open,created_at FROM pins WHERE workspace_id=?1 ORDER BY created_at DESC").map_err(|e|e.to_string())?;

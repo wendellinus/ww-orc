@@ -16,6 +16,7 @@ import {
   OcrFeed,
   recognizeImage,
   recognizeImageBytes,
+  recognizeExistingImage,
   type OcrResult,
 } from "@/features/ocr";
 import {
@@ -488,6 +489,27 @@ function App() {
     }
   }
 
+  async function recognizeDocument(document: OcrResult) {
+    if (busy.current || document.workspaceId !== activeWorkspaceId) return;
+    busy.current = true;
+    setLoading(true);
+    setError(null);
+    setCopiedImageId(null);
+    setSelectedImageId(document.imageId);
+    try {
+      const result = await recognizeExistingImage(document.imageId);
+      setDocuments((current) =>
+        current.map((item) => item.imageId === result.imageId ? result : item),
+      );
+      setError(result.errorMessage);
+    } catch (cause) {
+      setError(`重新识别失败：${String(cause)}`);
+    } finally {
+      busy.current = false;
+      setLoading(false);
+    }
+  }
+
   async function toggleAlwaysOnTop() {
     if (!desktop) return;
     try {
@@ -779,6 +801,7 @@ function App() {
               );
             }}
             onCopy={(document) => void copyDocument(document)}
+            onRecognize={(document) => void recognizeDocument(document)}
             onDelete={(document) =>
               setLibraryAction({
                 title: "删除图片？",

@@ -19,6 +19,10 @@ export function recognizeImageBytes(
   });
 }
 
+export function recognizeExistingImage(imageId: string): Promise<OcrResult> {
+  return invoke<OcrResult>("ocr_existing_image", { imageId });
+}
+
 export function listDocuments(workspaceId: string): Promise<OcrResult[]> {
   return invoke<OcrResult[]>("list_documents", { workspaceId });
 }

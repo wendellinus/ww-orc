@@ -49,3 +49,13 @@ pub fn ocr_image_bytes(
     };
     ocr_actions::recognize_bytes(&app, &state, &database, &storage, workspace_id, bytes)
 }
+
+#[tauri::command]
+pub fn ocr_existing_image(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+    image_id: String,
+) -> Result<OcrDocument, String> {
+    crate::ipc::authorization::main_only(&window)?;
+    ocr_actions::recognize_asset(&app, image_id.trim())
+}

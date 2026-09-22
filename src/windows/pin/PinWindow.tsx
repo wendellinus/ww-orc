@@ -219,7 +219,7 @@ export default function PinWindow({ id }: { id: string }) {
               void ocr();
             }}
           >
-            OCR 并复制文字
+            OCR、记录并复制文字
           </button>
           <button
             role="menuitem"

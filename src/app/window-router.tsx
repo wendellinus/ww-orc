@@ -12,22 +12,21 @@ export function WindowRouter() {
   document.documentElement.dataset.window = label.startsWith("pin_")
     ? "pin"
     : "other";
-  const capture = label.match(/^capture_([0-9a-f-]+)_(\d+)$/);
+  const capture = label.match(/^capture_(\d+)$/);
+  const quietFallback = label.startsWith("pin_") || Boolean(capture);
   const body = label.startsWith("note_") ? (
     <NoteWindow id={label.slice(5)} />
   ) : label.startsWith("pin_") ? (
     <PinWindow id={label.slice(4)} />
   ) : capture ? (
-    <CaptureWindow sessionId={capture[1]} monitorId={Number(capture[2])} />
+    <CaptureWindow monitorId={Number(capture[1])} />
   ) : (
     <MainWindow />
   );
   return (
     <Suspense
       fallback={
-        label.startsWith("pin_") ? null : (
-          <p className="desktop-loading">加载中…</p>
-        )
+        quietFallback ? null : <p className="desktop-loading">加载中…</p>
       }
     >
       {body}

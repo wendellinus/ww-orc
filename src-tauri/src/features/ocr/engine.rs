@@ -1,6 +1,19 @@
 use paddle_ocr_rs::ocr_lite::OcrLite;
 use std::{fs, path::Path, sync::Mutex};
 
+use super::types::{OcrOutput, OcrPoint, OcrTextBlock};
+
+const DEFAULT_MAX_SIDE: u32 = 1024;
+const SMALL_IMAGE_MAX_SIDE: u32 = 2048;
+const SMALL_IMAGE_TARGET_HEIGHT: u32 = 96;
+const MAX_UPSCALE: f32 = 3.0;
+
+const DEFAULT_BOX_SCORE_THRESHOLD: f32 = 0.5;
+const DEFAULT_BOX_THRESHOLD: f32 = 0.3;
+const RETRY_BOX_SCORE_THRESHOLD: f32 = 0.35;
+const RETRY_BOX_THRESHOLD: f32 = 0.2;
+const ANGLE_ROLLBACK_THRESHOLD: f32 = 0.8;
+
 pub struct OcrEngineState(Mutex<Option<OcrLite>>);
 
 impl Default for OcrEngineState {
@@ -10,7 +23,7 @@ impl Default for OcrEngineState {
 }
 
 impl OcrEngineState {
-    pub fn recognize(&self, model_dir: &Path, image_path: &Path) -> Result<String, String> {
+    pub fn recognize(&self, model_dir: &Path, image_path: &Path) -> Result<OcrOutput, String> {
         let mut engine = self
             .0
             .lock()
@@ -60,13 +73,129 @@ impl OcrEngineState {
             );
         }
 
-        let image_path = image_path.to_string_lossy();
-        let result = engine
-            .as_mut()
-            .expect("OCR engine must exist")
-            .detect_from_path(&image_path, 50, 1024, 0.5, 0.3, 1.6, true, false)
+        let source = image::open(image_path)
+            .map_err(|error| format!("Rust OCR 读取图片失败: {error}"))?
+            .to_rgb8();
+        let source_width = source.width();
+        let source_height = source.height();
+        let scale = preprocessing_scale(source_width, source_height);
+        let prepared = if scale > 1.0 {
+            let width = ((source_width as f32 * scale).round() as u32).max(1);
+            let height = ((source_height as f32 * scale).round() as u32).max(1);
+            image::imageops::resize(
+                &source,
+                width,
+                height,
+                image::imageops::FilterType::Lanczos3,
+            )
+        } else {
+            source
+        };
+        let max_side = if source_height < SMALL_IMAGE_TARGET_HEIGHT {
+            SMALL_IMAGE_MAX_SIDE
+        } else {
+            DEFAULT_MAX_SIDE
+        };
+        log::info!(
+            "ocr_input width={source_width} height={source_height} prepared_width={} prepared_height={} scale={scale:.3}",
+            prepared.width(),
+            prepared.height()
+        );
+
+        let ocr = engine.as_mut().expect("OCR engine must exist");
+        let mut result = ocr
+            .detect_angle_rollback(
+                &prepared,
+                50,
+                max_side,
+                DEFAULT_BOX_SCORE_THRESHOLD,
+                DEFAULT_BOX_THRESHOLD,
+                1.6,
+                true,
+                false,
+                ANGLE_ROLLBACK_THRESHOLD,
+            )
             .map_err(|error| format!("Rust OCR 识别失败: {error}"))?;
 
-        Ok(super::layout::format_text(&result.text_blocks))
+        if !contains_text(&result.text_blocks) {
+            log::info!("ocr_retry reason=no_text lower_detection_thresholds=true");
+            result = ocr
+                .detect_angle_rollback(
+                    &prepared,
+                    50,
+                    max_side,
+                    RETRY_BOX_SCORE_THRESHOLD,
+                    RETRY_BOX_THRESHOLD,
+                    1.6,
+                    true,
+                    false,
+                    ANGLE_ROLLBACK_THRESHOLD,
+                )
+                .map_err(|error| format!("Rust OCR 重试失败: {error}"))?;
+        }
+
+        log::info!(
+            "ocr_detection_completed block_count={}",
+            result.text_blocks.len()
+        );
+
+        let text = super::layout::format_text(&result.text_blocks);
+        let blocks = result
+            .text_blocks
+            .iter()
+            .filter_map(|block| {
+                let text = block.text.trim();
+                if text.is_empty() {
+                    return None;
+                }
+                Some(OcrTextBlock {
+                    text: text.to_string(),
+                    box_points: block
+                        .box_points
+                        .iter()
+                        .map(|point| OcrPoint {
+                            x: point.x as f64 / scale as f64,
+                            y: point.y as f64 / scale as f64,
+                        })
+                        .collect(),
+                })
+            })
+            .collect();
+
+        Ok(OcrOutput { text, blocks })
+    }
+}
+
+fn preprocessing_scale(width: u32, height: u32) -> f32 {
+    if width == 0 || height == 0 || height >= SMALL_IMAGE_TARGET_HEIGHT {
+        return 1.0;
+    }
+
+    let height_scale = SMALL_IMAGE_TARGET_HEIGHT as f32 / height as f32;
+    let side_scale = SMALL_IMAGE_MAX_SIDE as f32 / width.max(height) as f32;
+    height_scale.min(side_scale).min(MAX_UPSCALE).max(1.0)
+}
+
+fn contains_text(blocks: &[paddle_ocr_rs::ocr_result::TextBlock]) -> bool {
+    blocks.iter().any(|block| !block.text.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enlarges_short_screenshots_without_exceeding_limits() {
+        assert!((preprocessing_scale(363, 36) - 96.0 / 36.0).abs() < f32::EPSILON);
+        assert!((preprocessing_scale(928, 29) - 2048.0 / 928.0).abs() < f32::EPSILON);
+        assert_eq!(preprocessing_scale(100, 20), MAX_UPSCALE);
+        assert_eq!(preprocessing_scale(4096, 30), 1.0);
+    }
+
+    #[test]
+    fn leaves_normal_screenshots_at_original_size() {
+        assert_eq!(preprocessing_scale(800, 200), 1.0);
+        assert_eq!(preprocessing_scale(0, 20), 1.0);
+        assert_eq!(preprocessing_scale(20, 0), 1.0);
     }
 }

@@ -71,6 +71,8 @@ pub fn to_document(
     storage: &AppStorage,
     record: DocumentRecord,
 ) -> Result<OcrDocument, String> {
+    let blocks = serde_json::from_str(&record.blocks_json)
+        .map_err(|error| format!("读取识别坐标失败: {error}"))?;
     let absolute_path = storage.absolute_path(&record.relative_path)?;
     if absolute_path.is_file() {
         app.asset_protocol_scope()
@@ -85,6 +87,7 @@ pub fn to_document(
         image_path: absolute_path.to_string_lossy().into_owned(),
         status: record.status,
         text: record.text,
+        blocks,
         error_message: record.error_message,
         created_at: record.created_at,
     })

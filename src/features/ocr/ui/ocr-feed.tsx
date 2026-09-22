@@ -6,6 +6,7 @@ import {
   Expand,
   FileImage,
   LoaderCircle,
+  RefreshCw,
   ScanText,
   Trash2,
   X,
@@ -41,6 +42,7 @@ type Props = {
   resultRef: RefObject<HTMLParagraphElement | null>;
   onSelect: (imageId: string) => void;
   onCopy: (document: OcrResult) => void;
+  onRecognize: (document: OcrResult) => void;
   onDelete: (document: OcrResult) => void;
   onImageError: () => void;
 };
@@ -59,6 +61,7 @@ export function OcrFeed({
   resultRef,
   onSelect,
   onCopy,
+  onRecognize,
   onDelete,
   onImageError,
 }: Props) {
@@ -242,6 +245,16 @@ export function OcrFeed({
                               {dateFormatter.format(document.createdAt * 1000)}
                             </time>
                             <div className="flex shrink-0 items-center gap-0.5">
+                              <Button
+                                size="icon-xs"
+                                variant="ghost"
+                                disabled={loading}
+                                onClick={(event) => { event.stopPropagation(); onRecognize(document); }}
+                                aria-label={`重新识别${document.fileName}`}
+                                title="使用当前引擎重新识别"
+                              >
+                                <RefreshCw aria-hidden="true" />
+                              </Button>
                               <Button
                                 size="icon-xs"
                                 variant="ghost"

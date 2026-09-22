@@ -66,7 +66,18 @@ pub fn create_pin(app: &tauri::AppHandle, image_id: &str) -> Result<pins::model:
         &app.state::<AppStorage>(),
         image_id,
     )?;
-    let pin = pins::repository::create(&app.state::<Database>(), &image.workspace_id, image_id)?;
+    let pin = match pins::repository::get_by_image(
+        &app.state::<Database>(),
+        &image.workspace_id,
+        image_id,
+    )? {
+        Some(pin) => pin,
+        None => pins::repository::create(
+            &app.state::<Database>(),
+            &image.workspace_id,
+            image_id,
+        )?,
+    };
     if let Err(e) = open(app, "pin", &pin.id) {
         pins::repository::set_open(&app.state::<Database>(), &pin.id, false)?;
         return Err(e);
@@ -277,15 +288,7 @@ pub fn paste_clipboard_pin(
         .map_err(|_| "截图会话锁不可用")?
         .is_some();
     if capturing {
-        let window = app
-            .webview_windows()
-            .into_values()
-            .find(|window| {
-                window.label().starts_with("capture_") && window.is_focused().unwrap_or(false)
-            })
-            .ok_or("请在截图窗口中框选区域")?;
-        window
-            .emit("capture:pin-selection", ())
+        app.emit("capture:pin-selection", ())
             .map_err(|e| e.to_string())?;
         return Ok(None);
     }
@@ -299,6 +302,11 @@ pub fn paste_clipboard_pin(
         clipboard.rgba().to_vec(),
     )
     .ok_or("剪贴板图片数据无效")?;
+    if let Some(pin) = find_pin_with_pixels(app, workspace, &rgba)? {
+        open(app, "pin", &pin.id)?;
+        changed(app);
+        return Ok(Some(pin));
+    }
     let storage = app.state::<AppStorage>();
     let mut stored = storage.store_rgba(workspace, &rgba)?;
     stored.original_name = "剪贴板图片.png".into();
@@ -311,4 +319,28 @@ pub fn paste_clipboard_pin(
     let pin = create_pin(app, &stored.id)?;
     let _ = app.emit("ocr:changed", workspace);
     Ok(Some(pin))
+}
+
+fn find_pin_with_pixels(
+    app: &tauri::AppHandle,
+    workspace: &str,
+    expected: &image::RgbaImage,
+) -> Result<Option<pins::model::Pin>, String> {
+    let database = app.state::<Database>();
+    let storage = app.state::<AppStorage>();
+    for pin in pins::repository::list(&database, workspace)? {
+        let Ok(stored) = image_assets::repository::get(&database, &storage, &pin.image_id) else {
+            continue;
+        };
+        let Ok(actual) = image::open(&stored.absolute_path).map(|image| image.to_rgba8()) else {
+            continue;
+        };
+        if actual.width() == expected.width()
+            && actual.height() == expected.height()
+            && actual.as_raw() == expected.as_raw()
+        {
+            return Ok(Some(pin));
+        }
+    }
+    Ok(None)
 }

@@ -12,7 +12,7 @@ pub fn init(app: &tauri::AppHandle) -> tauri::Result<()> {
         TrayAction::Capture => {
             let app = app.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                if let Err(e) = super::capture_actions::start(&app, "default") {
+                if let Err(e) = super::capture_actions::restart(&app, "default") {
                     let _ = app.emit_to("main", "desktop:error", e);
                 }
             });

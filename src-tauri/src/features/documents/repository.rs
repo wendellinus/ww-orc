@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use super::types::DocumentRecord;
 use crate::features::image_assets::types::StoredImage;
+use crate::features::ocr::types::OcrTextBlock;
 
 const OCR_ENGINE_VERSION: &str = "paddle-ocr-rs/0.6.1";
 
@@ -45,12 +46,26 @@ pub fn create_existing_run(database: &Database, image: &StoredImage) -> Result<S
     Ok(id)
 }
 
-pub fn complete_run(database: &Database, run_id: &str, text: &str) -> Result<(), String> {
-    update_run(database, run_id, "completed", Some(text), None)
+pub fn complete_run(
+    database: &Database,
+    run_id: &str,
+    text: &str,
+    blocks: &[OcrTextBlock],
+) -> Result<(), String> {
+    let blocks_json =
+        serde_json::to_string(blocks).map_err(|error| format!("序列化识别坐标失败: {error}"))?;
+    update_run(
+        database,
+        run_id,
+        "completed",
+        Some(text),
+        Some(&blocks_json),
+        None,
+    )
 }
 
 pub fn fail_run(database: &Database, run_id: &str, message: &str) -> Result<(), String> {
-    update_run(database, run_id, "failed", None, Some(message))
+    update_run(database, run_id, "failed", None, None, Some(message))
 }
 
 fn update_run(
@@ -58,6 +73,7 @@ fn update_run(
     run_id: &str,
     status: &str,
     text: Option<&str>,
+    blocks_json: Option<&str>,
     error_message: Option<&str>,
 ) -> Result<(), String> {
     let timestamp = unix_timestamp()?;
@@ -65,9 +81,13 @@ fn update_run(
     let changed = connection
         .execute(
             "UPDATE ocr_runs
-             SET status = ?1, text = ?2, error_message = ?3, finished_at = ?4
-             WHERE id = ?5",
-            params![status, text, error_message, timestamp, run_id],
+             SET status = ?1,
+                 text = ?2,
+                 error_message = ?3,
+                 blocks_json = COALESCE(?4, blocks_json),
+                 finished_at = ?5
+             WHERE id = ?6",
+            params![status, text, error_message, blocks_json, timestamp, run_id],
         )
         .map_err(|error| format!("更新识别记录失败: {error}"))?;
 
@@ -88,6 +108,7 @@ pub fn list(database: &Database, workspace_id: &str) -> Result<Vec<DocumentRecor
                 i.relative_path,
                 COALESCE(r.status, 'unrecognized'),
                 COALESCE(r.text, ''),
+                COALESCE(r.blocks_json, '[]'),
                 r.error_message,
                 i.created_at
              FROM images i
@@ -100,6 +121,7 @@ pub fn list(database: &Database, workspace_id: &str) -> Result<Vec<DocumentRecor
                 LIMIT 1
              )
              WHERE i.workspace_id = ?1
+               AND r.id IS NOT NULL
              ORDER BY i.created_at ASC, i.rowid ASC",
         )
         .map_err(|error| format!("准备图片查询失败: {error}"))?;
@@ -113,8 +135,9 @@ pub fn list(database: &Database, workspace_id: &str) -> Result<Vec<DocumentRecor
                 relative_path: row.get(3)?,
                 status: row.get(4)?,
                 text: row.get(5)?,
-                error_message: row.get(6)?,
-                created_at: row.get(7)?,
+                blocks_json: row.get(6)?,
+                error_message: row.get(7)?,
+                created_at: row.get(8)?,
             })
         })
         .map_err(|error| format!("查询图片失败: {error}"))?;
@@ -155,4 +178,39 @@ pub fn delete(database: &Database, workspace_id: &str, image_id: &str) -> Result
         return Err("图片不存在".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::persistence::run_migrations;
+    use std::path::Path;
+
+    #[test]
+    fn cached_images_stay_out_of_ocr_history_and_workspace_count() {
+        let database = Database::open(Path::new(":memory:")).unwrap();
+        run_migrations(&database).unwrap();
+        let connection = database.connection().unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO images
+                    (id, workspace_id, original_name, relative_path, mime_type, byte_size, width, height, created_at)
+                 VALUES
+                    ('cached', 'default', 'cached.png', 'cached.png', 'image/png', 1, 10, 10, 1),
+                    ('recorded', 'default', 'recorded.png', 'recorded.png', 'image/png', 1, 10, 10, 2);
+                 INSERT INTO ocr_runs
+                    (id, workspace_id, image_id, status, text, engine_version, created_at, finished_at)
+                 VALUES
+                    ('run', 'default', 'recorded', 'completed', 'text', 'test', 2, 2);",
+            )
+            .unwrap();
+        drop(connection);
+
+        let documents = list(&database, "default").unwrap();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].image_id, "recorded");
+
+        let workspaces = crate::features::workspace::repository::list(&database).unwrap();
+        assert_eq!(workspaces[0].image_count, 1);
+    }
 }

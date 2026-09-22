@@ -23,12 +23,6 @@ impl AppStorage {
         Ok(Self { root })
     }
 
-    pub fn capture_path(&self, session: &str, monitor: u32) -> PathBuf {
-        self.root
-            .join("temp")
-            .join(format!("capture-{session}-{monitor}.png"))
-    }
-
     pub fn store_rgba(
         &self,
         workspace: &str,

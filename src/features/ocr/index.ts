@@ -3,6 +3,7 @@ export {
   listDocuments,
   recognizeImage,
   recognizeImageBytes,
+  recognizeExistingImage,
 } from "./ocr.service";
 export { OcrFeed } from "./ui/ocr-feed";
-export type { OcrResult } from "./ocr.types";
+export type { OcrPoint, OcrResult, OcrTextBlock } from "./ocr.types";

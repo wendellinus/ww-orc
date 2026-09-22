@@ -20,8 +20,46 @@ pub fn run() {
             ))?;
             log::info!("app_start version={}", env!("CARGO_PKG_VERSION"));
             #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
+            app.handle().plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(|app, shortcut, event| {
+                        use tauri::Emitter;
+                        use tauri_plugin_global_shortcut::ShortcutState;
+                        // Windows 注册时已使用 MOD_NOREPEAT，不能再依赖 Released
+                        // 维护额外按键锁；焦点切换期间 Released 可能延迟或丢失。
+                        if event.state != ShortcutState::Pressed {
+                            return;
+                        }
+                        let binding = app
+                            .state::<crate::features::capture::session::NativeCaptureShortcut>();
+                        let workspace_id = binding
+                            .0
+                            .lock()
+                            .ok()
+                            .and_then(|binding| {
+                                (binding.shortcut_id == Some(shortcut.id()))
+                                    .then(|| binding.workspace_id.clone())
+                                    .flatten()
+                            });
+                        let Some(workspace_id) = workspace_id else {
+                            return;
+                        };
+                        // 前端只维护可配置绑定；截图热键命中后直接进入 Rust。
+                        // 已在框选时再次按下同一热键，会清理会话并关闭截图层。
+                        let handle = app.clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            if let Err(error) =
+                                crate::application::capture_actions::toggle(
+                                    &handle,
+                                    &workspace_id,
+                                )
+                            {
+                                let _ = handle.emit_to("main", "desktop:error", error);
+                            }
+                        });
+                    })
+                    .build(),
+            )?;
             let data_dir = app.path().app_local_data_dir().inspect_err(|_| {
                 log::error!("app_setup_failed stage=data_directory");
             })?;
@@ -50,6 +88,9 @@ pub fn run() {
             app.manage(database);
             app.manage(storage);
             crate::application::tray_actions::init(app.handle())?;
+            if crate::application::capture_actions::warmup(app.handle()).is_err() {
+                log::warn!("capture_warmup_failed");
+            }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error) = crate::application::desktop_actions::restore(&handle) {
@@ -74,6 +115,7 @@ pub fn run() {
             }
         })
         .manage(crate::features::capture::session::CaptureState::default())
+        .manage(crate::features::capture::session::NativeCaptureShortcut::default())
         .manage(crate::application::desktop_actions::QuitState::default())
         .manage(OcrEngineState::default())
         .plugin(tauri_plugin_opener::init())
@@ -87,6 +129,7 @@ pub fn run() {
             ipc::commands::documents::delete_document,
             ipc::commands::ocr::ocr_image,
             ipc::commands::ocr::ocr_image_bytes,
+            ipc::commands::ocr::ocr_existing_image,
             ipc::commands::desktop::list_desktop_items,
             ipc::commands::desktop::create_note,
             ipc::commands::desktop::get_note,
@@ -105,7 +148,11 @@ pub fn run() {
             ipc::commands::desktop::cancel_desktop_quit,
             ipc::commands::desktop::request_desktop_quit,
             ipc::commands::capture::start_capture,
+            ipc::commands::capture::configure_native_capture,
             ipc::commands::capture::get_capture_snapshot,
+            ipc::commands::capture::get_capture_preview,
+            ipc::commands::capture::capture_host_ready,
+            ipc::commands::capture::capture_window_ready,
             ipc::commands::capture::cancel_capture,
             ipc::commands::capture::finish_capture,
         ])

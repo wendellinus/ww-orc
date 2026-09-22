@@ -7086,6 +7086,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-opener",
  "uuid",
+ "windows 0.61.3",
  "xcap",
 ]
 

@@ -9,7 +9,9 @@ pub fn list(database: &Database) -> Result<Vec<Workspace>, String> {
     let mut statement = connection
         .prepare(
             "SELECT id, name, created_at, updated_at,
-                (SELECT COUNT(*) FROM images WHERE workspace_id = workspaces.id)
+                (SELECT COUNT(DISTINCT image_id)
+                 FROM ocr_runs
+                 WHERE workspace_id = workspaces.id)
              FROM workspaces
              ORDER BY updated_at DESC, created_at DESC",
         )

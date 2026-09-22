@@ -6,25 +6,32 @@ pub struct Selection {
     pub width: f64,
     pub height: f64,
 }
-pub fn pixels(s: &Selection, width: u32, height: u32) -> Result<(u32, u32, u32, u32), String> {
+pub fn pixels(s: &Selection) -> Result<(i32, i32, u32, u32), String> {
     if [s.x, s.y, s.width, s.height].iter().any(|v| !v.is_finite())
-        || s.x < 0.0
-        || s.y < 0.0
         || s.width <= 0.0
         || s.height <= 0.0
-        || s.x + s.width > 1.000001
-        || s.y + s.height > 1.000001
     {
         return Err("截图选区无效".into());
     }
-    let x = (s.x * width as f64).floor() as u32;
-    let y = (s.y * height as f64).floor() as u32;
-    let right = ((s.x + s.width) * width as f64).ceil().min(width as f64) as u32;
-    let bottom = ((s.y + s.height) * height as f64).ceil().min(height as f64) as u32;
-    if right <= x || bottom <= y {
+    let left = s.x.floor();
+    let top = s.y.floor();
+    let right = (s.x + s.width).ceil();
+    let bottom = (s.y + s.height).ceil();
+    if left < i32::MIN as f64
+        || top < i32::MIN as f64
+        || right > i32::MAX as f64
+        || bottom > i32::MAX as f64
+    {
+        return Err("截图选区超出桌面范围".into());
+    }
+    let x = left as i32;
+    let y = top as i32;
+    let width = (right - left) as u32;
+    let height = (bottom - top) as u32;
+    if width < 2 || height < 2 {
         return Err("截图选区太小".into());
     }
-    Ok((x, y, right - x, bottom - y))
+    Ok((x, y, width, height))
 }
 #[cfg(test)]
 mod tests {
@@ -34,26 +41,22 @@ mod tests {
         assert_eq!(
             pixels(
                 &Selection {
-                    x: 0.25,
-                    y: 0.2,
-                    width: 0.5,
-                    height: 0.6
-                },
-                2000,
-                1000
+                    x: -500.0,
+                    y: 200.0,
+                    width: 1000.0,
+                    height: 600.0
+                }
             )
             .unwrap(),
-            (500, 200, 1000, 600)
+            (-500, 200, 1000, 600)
         );
         assert!(pixels(
             &Selection {
-                x: 0.9,
+                x: 0.0,
                 y: 0.0,
-                width: 0.2,
+                width: 1.0,
                 height: 1.0
-            },
-            100,
-            100
+            }
         )
         .is_err());
         assert!(pixels(
@@ -62,9 +65,7 @@ mod tests {
                 y: 0.0,
                 width: 1.0,
                 height: 1.0
-            },
-            100,
-            100
+            }
         )
         .is_err());
     }

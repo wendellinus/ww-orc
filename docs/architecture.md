@@ -25,7 +25,7 @@ application 组合功能；features 拥有模型和数据访问，不互相调�
 | 框选 | 每个显示器独立窗口，显示冻结画面和选区，不操作数据库 |
 | 贴图 | pins 拥有图片引用、缩放和打开状态；透明无阴影纯图片窗口始终置顶，缩放同步物理尺寸，操作在右键菜单；窗口复用 desktop_windows |
 | 便签 | notes 拥有正文、颜色、revision；前端 NoteAutosave 串行合并草稿写入 |
-| OCR | 复用 engine/layout，识别在后台 spawn_blocking 执行；引擎 mutex 保证串行并复用模型 |
+| OCR | 复用 engine/layout，识别在后台 spawn_blocking 执行；引擎 mutex 保证串行并复用模型；文字块原图坐标随结果持久化 |
 | OCR 历史 | documents 查询每张图片最新 run，不绑定图片必须识别 |
 | 窗口 | desktop_windows 管理创建、几何状态和恢复；application 接入生命周期及对象打开状态 |
 | 快捷键 | 复用既有主窗口快捷键注册系统，避免重复注册；新增截图和便签全局命令 |
