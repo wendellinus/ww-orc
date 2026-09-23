@@ -1,17 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { Menu } from "@base-ui/react/menu";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
-import { Check, Keyboard, LoaderCircle, Power, Settings } from "lucide-react";
+import { Check, Keyboard, LoaderCircle, LogOut, Minus, Power, Settings } from "lucide-react";
 
 type Props = {
   desktop: boolean;
   onOpenShortcuts: () => void;
+  onHideToTray: () => void;
+  onQuit: () => void;
   onError: (message: string) => void;
 };
 
 const itemClassName = "flex cursor-default items-center gap-2 rounded-md px-2.5 py-2 text-sm outline-none data-disabled:opacity-50 data-highlighted:bg-muted";
 
-export function SettingsMenu({ desktop, onOpenShortcuts, onError }: Props) {
+export function SettingsMenu({
+  desktop,
+  onOpenShortcuts,
+  onHideToTray,
+  onQuit,
+  onError,
+}: Props) {
   const [enabled, setEnabled] = useState(false);
   const [ready, setReady] = useState(false);
   const [pending, setPending] = useState(false);
@@ -96,6 +104,22 @@ export function SettingsMenu({ desktop, onOpenShortcuts, onError }: Props) {
             <Menu.Item className={itemClassName} onClick={onOpenShortcuts}>
               <Keyboard className="size-4" aria-hidden="true" />
               <span>快捷键设置</span>
+            </Menu.Item>
+            <Menu.Item
+              className={itemClassName}
+              disabled={!desktop}
+              onClick={onHideToTray}
+            >
+              <Minus className="size-4" aria-hidden="true" />
+              <span>关闭到托盘</span>
+            </Menu.Item>
+            <Menu.Item
+              className={itemClassName}
+              disabled={!desktop}
+              onClick={onQuit}
+            >
+              <LogOut className="size-4" aria-hidden="true" />
+              <span>完全退出</span>
             </Menu.Item>
           </Menu.Popup>
         </Menu.Positioner>

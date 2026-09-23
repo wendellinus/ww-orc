@@ -46,6 +46,7 @@ export default function CaptureWindow({
   const [rect, setRect] = useState<Rect | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pinning, setPinning] = useState(false);
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const selectionLayer = useRef<HTMLDivElement | null>(null);
   const interaction = useRef<SelectionInteraction | null>(null);
@@ -77,7 +78,7 @@ export default function CaptureWindow({
     let disposed = false;
     const stops: Array<() => void> = [];
     const activate = (nextSessionId: string) => {
-      // 预热窗口会跨会话复用，因此交互引用和可见状态必须成组重置。
+      // 预热窗口会长期跨会话复用，因此交互引用和可见状态必须成组重置。
       revealing.current = false;
       finishing.current = false;
       drawing.current = false;
@@ -93,6 +94,7 @@ export default function CaptureWindow({
       setHoverRect(null);
       setError(null);
       setBusy(false);
+      setPinning(false);
       setSessionId(nextSessionId);
     };
     const reset = () => {
@@ -110,6 +112,7 @@ export default function CaptureWindow({
       setHoverRect(null);
       setError(null);
       setBusy(false);
+      setPinning(false);
     };
     void Promise.all([
       listen<string>("capture:start", (event) => activate(event.payload)),
@@ -295,13 +298,49 @@ export default function CaptureWindow({
       return;
     finishing.current = true;
     setBusy(true);
+    setPinning(action === "pin");
     setError(null);
     try {
-      await finishCapture(sessionId, monitorId, rect, action);
+      if (action !== "pin") {
+        await finishCapture(sessionId, monitorId, rect, action);
+        return;
+      }
+
+      let expectedPinId: string | null = null;
+      let resolveReady = () => {};
+      const readyIds = new Set<string>();
+      const ready = new Promise<void>((resolve) => {
+        resolveReady = resolve;
+      });
+      const stop = await listen<{ id: string }>("pin:ready", (event) => {
+        readyIds.add(event.payload.id);
+        if (event.payload.id === expectedPinId) resolveReady();
+      });
+      try {
+        expectedPinId = await finishCapture(
+          sessionId,
+          monitorId,
+          rect,
+          action,
+        );
+        if (readyIds.has(expectedPinId)) resolveReady();
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          ready,
+          new Promise<void>((resolve) => {
+            timeout = setTimeout(resolve, 1600);
+          }),
+        ]);
+        clearTimeout(timeout);
+        await cancelCapture(sessionId);
+      } finally {
+        stop();
+      }
     } catch (e) {
       setError(String(e));
       finishing.current = false;
       setBusy(false);
+      setPinning(false);
     }
   }
 
@@ -389,6 +428,7 @@ export default function CaptureWindow({
   return (
     <main
       className="capture-window"
+      data-pinning={pinning || undefined}
       onContextMenu={(e) => {
         e.preventDefault();
         void cancel();
@@ -487,6 +527,7 @@ export default function CaptureWindow({
           <div
             className="capture-selection"
             data-suggested={!rect || undefined}
+            data-pinning={pinning || undefined}
             onPointerDown={(e) => {
               if (!rect || busy) return;
               e.stopPropagation();

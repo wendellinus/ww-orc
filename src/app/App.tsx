@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -544,6 +544,22 @@ function App() {
     }
   }
 
+  async function hideToTray() {
+    try {
+      await getCurrentWindow().close();
+    } catch (cause) {
+      setError(`关闭到托盘失败：${String(cause)}`);
+    }
+  }
+
+  async function quitApplication() {
+    try {
+      await invoke<void>("request_desktop_quit");
+    } catch (cause) {
+      setError(`完全退出失败：${String(cause)}`);
+    }
+  }
+
   async function capture() {
     if (!activeWorkspaceId || captureBusy.current) return;
     captureBusy.current = true;
@@ -706,6 +722,8 @@ function App() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onOpenShortcuts={() => setShortcutsOpen(true)}
+        onHideToTray={() => void hideToTray()}
+        onQuit={() => void quitApplication()}
         onError={setError}
         onToggleAlwaysOnTop={() =>
           void shortcuts.execute("window.toggleAlwaysOnTop")

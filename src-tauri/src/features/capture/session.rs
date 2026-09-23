@@ -1,6 +1,7 @@
 use image::RgbaImage;
 use serde::Serialize;
 use std::{collections::HashSet, sync::Mutex};
+use tauri_plugin_global_shortcut::Shortcut;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,7 +122,8 @@ pub struct CaptureState(pub Mutex<Option<Session>>);
 
 #[derive(Default)]
 pub struct NativeCaptureBinding {
-    pub shortcut_id: Option<u32>,
+    pub shortcut: Option<Shortcut>,
+    pub show_shortcut: Option<Shortcut>,
     pub workspace_id: Option<String>,
 }
 

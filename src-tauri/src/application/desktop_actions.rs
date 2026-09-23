@@ -253,9 +253,7 @@ pub fn cancel_quit(app: &tauri::AppHandle, message: &str) -> Result<(), String> 
         .0
         .lock()
         .map_err(|_| "退出状态不可用")? = None;
-    if let Some(win) = app.get_webview_window("main") {
-        win.show().map_err(|e| e.to_string())?;
-    }
+    crate::application::main_window_actions::show(app)?;
     app.emit_to("main", "desktop:error", message)
         .map_err(|e| e.to_string())
 }

@@ -146,14 +146,38 @@ html[data-window="pin"] #root {
   cursor: move;
   touch-action: none;
 }
-.desktop-pin::after {
+.desktop-pin[data-ready="true"]::after {
   content: "";
   position: absolute;
   z-index: 1;
   inset: 0;
-  border: 1px solid rgb(255 255 255 / 24%);
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 16%);
+  box-shadow:
+    inset 0 0 7px rgb(255 255 255 / 22%),
+    inset 0 0 3px rgb(21 29 40 / 20%);
   pointer-events: none;
+  animation: pin-settle-glow 560ms ease-out both;
+}
+@keyframes pin-settle-glow {
+  0% {
+    box-shadow:
+      inset 0 0 18px rgb(255 205 102 / 66%),
+      inset 0 0 5px rgb(255 255 255 / 42%);
+  }
+  45% {
+    box-shadow:
+      inset 0 0 11px rgb(255 223 145 / 42%),
+      inset 0 0 4px rgb(255 255 255 / 30%);
+  }
+  100% {
+    box-shadow:
+      inset 0 0 7px rgb(255 255 255 / 22%),
+      inset 0 0 3px rgb(21 29 40 / 20%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .desktop-pin[data-ready="true"]::after {
+    animation: none;
+  }
 }
 .pin-image {
   display: block;
@@ -253,6 +277,32 @@ html[data-window="pin"] #root {
   border-color: #63b3ff;
   pointer-events: none;
 }
+.capture-window[data-pinning="true"] .capture-selection-layer {
+  pointer-events: none;
+}
+.capture-selection[data-pinning="true"] {
+  border-color: transparent;
+  cursor: default;
+  animation: capture-pin-pending 620ms ease-in-out infinite alternate;
+}
+.capture-selection[data-pinning="true"] .capture-size,
+.capture-selection[data-pinning="true"] .capture-resize-handle {
+  display: none;
+}
+@keyframes capture-pin-pending {
+  from {
+    box-shadow:
+      inset 0 0 7px rgb(255 255 255 / 22%),
+      0 0 8px rgb(255 210 105 / 34%),
+      0 0 0 10000px rgb(0 0 0 / 40%);
+  }
+  to {
+    box-shadow:
+      inset 0 0 12px rgb(255 225 155 / 38%),
+      0 0 16px rgb(255 210 105 / 52%),
+      0 0 0 10000px rgb(0 0 0 / 40%);
+  }
+}
 .capture-size {
   position: absolute;
   left: 0;
@@ -337,6 +387,11 @@ html[data-window="pin"] #root {
   max-width: calc(100% - 24px);
   flex-wrap: wrap;
   justify-content: center;
+  transition: opacity 120ms ease-out;
+}
+.capture-window[data-pinning="true"] .capture-toolbar {
+  opacity: 0;
+  pointer-events: none;
 }
 .capture-toolbar span {
   font-size: 11px;
@@ -491,5 +546,14 @@ html[data-window="pin"] #root {
   }
   .desktop-action {
     padding: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .capture-selection[data-pinning="true"] {
+    animation: none;
+    box-shadow:
+      inset 0 0 9px rgb(255 225 155 / 30%),
+      0 0 11px rgb(255 210 105 / 40%),
+      0 0 0 10000px rgb(0 0 0 / 40%);
   }
 }

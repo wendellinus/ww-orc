@@ -29,13 +29,15 @@ export function useShortcuts(commands: readonly Command[], context: CommandConte
   validateBindings(commands, config, platform);
   const entries = resolveBindings(commands, config, context.workspaceId).map(entry => ({ ...entry, global: native ? entry.global : false }));
   const globalBindings = (value: ShortcutConfig) => resolveBindings(commands, value, null)
-    .filter(entry => entry.global && entry.shortcut)
+    .filter(entry => entry.global && entry.shortcut && !["capture.start", "window.show"].includes(entry.id))
     .map(entry => ({ id: entry.id, shortcut: entry.shortcut! }));
   const configureNativeCapture = (value: ShortcutConfig, workspaceId: string | null) => {
-    const shortcut = resolveBindings(commands, value, null)
-      .find(entry => entry.id === "capture.start")?.shortcut;
+    const bindings = resolveBindings(commands, value, null);
+    const shortcut = bindings.find(entry => entry.id === "capture.start")?.shortcut;
+    const showShortcut = bindings.find(entry => entry.id === "window.show")?.shortcut;
     return invoke<void>("configure_native_capture", {
       shortcut: shortcut ? nativeShortcut(shortcut) : null,
+      showShortcut: showShortcut ? nativeShortcut(showShortcut) : null,
       workspaceId,
     });
   };
@@ -49,7 +51,6 @@ export function useShortcuts(commands: readonly Command[], context: CommandConte
     return () => {
       active = false;
       void native.replace([]).catch(error => onError(String(error)));
-      void configureNativeCapture(initial.config, null).catch(() => {});
     };
   // Settings updates go through saveConfig; do not unregister after a successful save.
   }, [native, startupBindings]);

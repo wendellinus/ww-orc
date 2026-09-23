@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow, PhysicalSize } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -14,6 +14,7 @@ import { closeObject } from "@/shared/window/api";
 
 export default function PinWindow({ id }: { id: string }) {
   const [view, setView] = useState<PinView | null>(null);
+  const [imageReady, setImageReady] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -159,6 +160,7 @@ export default function PinWindow({ id }: { id: string }) {
   return (
     <main
       className="desktop-pin"
+      data-ready={imageReady}
       aria-label="桌面贴图"
       onWheel={(e) => {
         e.preventDefault();
@@ -188,6 +190,14 @@ export default function PinWindow({ id }: { id: string }) {
           src={convertFileSrc(view.imagePath)}
           alt="桌面贴图"
           draggable={false}
+          onLoad={() => {
+            setImageReady(true);
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                void emit("pin:ready", { id });
+              });
+            });
+          }}
           onError={() => setError("贴图读取失败，请检查图片是否存在")}
         />
       ) : null}

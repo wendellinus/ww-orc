@@ -1,13 +1,14 @@
 use crate::infrastructure::tray::{self, TrayAction};
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 pub fn init(app: &tauri::AppHandle) -> tauri::Result<()> {
     tray::init(app, |app, action| match action {
         TrayAction::Show => {
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.unminimize();
-                let _ = win.set_focus();
-            }
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = super::main_window_actions::show(&app) {
+                    log::error!("main_window_show_failed reason={error}");
+                }
+            });
         }
         TrayAction::Capture => {
             let app = app.clone();

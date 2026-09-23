@@ -12,6 +12,8 @@ type Props = {
   searchQuery: string;
   onSearchChange: (value: string) => void;
   onOpenShortcuts: () => void;
+  onHideToTray: () => void;
+  onQuit: () => void;
   onError: (message: string) => void;
   onToggleAlwaysOnTop: () => void;
   onWindowAction: (action: "minimize" | "toggleMaximize" | "close") => void;
@@ -24,6 +26,8 @@ export function WindowTitleBar({
   searchQuery,
   onSearchChange,
   onOpenShortcuts,
+  onHideToTray,
+  onQuit,
   onError,
   onToggleAlwaysOnTop,
   onWindowAction,
@@ -76,6 +80,8 @@ export function WindowTitleBar({
         <SettingsMenu
           desktop={desktop}
           onOpenShortcuts={onOpenShortcuts}
+          onHideToTray={onHideToTray}
+          onQuit={onQuit}
           onError={onError}
         />
         <Button

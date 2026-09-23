@@ -174,7 +174,7 @@ pub fn window_ready_to_quit(
     actions::window_ready_to_quit(&app, window.label())
 }
 #[tauri::command]
-pub fn cancel_desktop_quit(
+pub async fn cancel_desktop_quit(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     message: String,
@@ -182,7 +182,9 @@ pub fn cancel_desktop_quit(
     if !window.label().starts_with("note_") && !window.label().starts_with("pin_") {
         return Err("仅便签可取消保存退出".into());
     }
-    actions::cancel_quit(&app, &message)
+    tauri::async_runtime::spawn_blocking(move || actions::cancel_quit(&app, &message))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

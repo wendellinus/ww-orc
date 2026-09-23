@@ -2,6 +2,8 @@ use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, Webvie
 
 use super::session::Snapshot;
 
+static CAPTURE_WINDOW_CREATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Clone, Copy)]
 pub struct CaptureWindowSpec {
     pub monitor_id: u32,
@@ -80,6 +82,9 @@ pub fn ensure(
     height: u32,
     scale: f64,
 ) -> Result<tauri::WebviewWindow, String> {
+    let _create_guard = CAPTURE_WINDOW_CREATE_LOCK
+        .lock()
+        .map_err(|_| "截图窗口创建锁不可用")?;
     let window_label = label(monitor_id);
     let window = if let Some(window) = app.get_webview_window(&window_label) {
         window

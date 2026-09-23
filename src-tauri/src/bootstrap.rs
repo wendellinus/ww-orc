@@ -10,7 +10,15 @@ use std::fs;
 use tauri::Manager;
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Err(error) = crate::application::main_window_actions::show(app) {
+            log::error!("main_window_single_instance_show_failed reason={error}");
+        }
+    }));
+
+    builder
         .setup(|app| {
             logging::init(app.handle());
             #[cfg(desktop)]
@@ -32,21 +40,38 @@ pub fn run() {
                         }
                         let binding =
                             app.state::<crate::features::capture::session::NativeCaptureShortcut>();
-                        let workspace_id = binding.0.lock().ok().and_then(|binding| {
-                            (binding.shortcut_id == Some(shortcut.id()))
-                                .then(|| binding.workspace_id.clone())
-                                .flatten()
+                        let action = binding.0.lock().ok().and_then(|binding| {
+                            if binding
+                                .shortcut
+                                .as_ref()
+                                .map(tauri_plugin_global_shortcut::Shortcut::id)
+                                == Some(shortcut.id())
+                            {
+                                binding.workspace_id.clone().map(Some)
+                            } else if binding
+                                .show_shortcut
+                                .as_ref()
+                                .map(tauri_plugin_global_shortcut::Shortcut::id)
+                                == Some(shortcut.id())
+                            {
+                                Some(None)
+                            } else {
+                                None
+                            }
                         });
-                        let Some(workspace_id) = workspace_id else {
-                            return;
-                        };
+                        let Some(action) = action else { return };
                         // 前端只维护可配置绑定；截图热键命中后直接进入 Rust。
                         // 已在框选时再次按下同一热键，会清理会话并关闭截图层。
                         let handle = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
-                            if let Err(error) =
-                                crate::application::capture_actions::toggle(&handle, &workspace_id)
-                            {
+                            let result = match action {
+                                Some(workspace_id) => crate::application::capture_actions::toggle(
+                                    &handle,
+                                    &workspace_id,
+                                ),
+                                None => crate::application::main_window_actions::show(&handle),
+                            };
+                            if let Err(error) = result {
                                 let _ = handle.emit_to("main", "desktop:error", error);
                             }
                         });
@@ -81,9 +106,12 @@ pub fn run() {
             app.manage(database);
             app.manage(storage);
             crate::application::tray_actions::init(app.handle())?;
-            if crate::application::capture_actions::warmup(app.handle()).is_err() {
-                log::warn!("capture_warmup_failed");
-            }
+            let capture_handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = crate::application::capture_actions::warmup(&capture_handle) {
+                    log::warn!("capture_warmup_failed reason={error}");
+                }
+            });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error) = crate::application::desktop_actions::restore(&handle) {
@@ -103,13 +131,19 @@ pub fn run() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    let _ = window.hide();
+                    if let Err(error) = crate::application::main_window_actions::hide_to_tray(
+                        window.app_handle(),
+                        window,
+                    ) {
+                        log::error!("main_window_hide_failed reason={error}");
+                    }
                 }
             }
         })
         .manage(crate::features::capture::session::CaptureState::default())
         .manage(crate::features::capture::session::NativeCaptureShortcut::default())
         .manage(crate::application::desktop_actions::QuitState::default())
+        .manage(crate::application::main_window_actions::MainWindowLifecycle::default())
         .manage(OcrEngineState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
