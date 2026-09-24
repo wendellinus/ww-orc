@@ -123,6 +123,7 @@ pub struct CaptureState(pub Mutex<Option<Session>>);
 #[derive(Default)]
 pub struct NativeCaptureBinding {
     pub shortcut: Option<Shortcut>,
+    pub paste_shortcut: Option<Shortcut>,
     pub show_shortcut: Option<Shortcut>,
     pub workspace_id: Option<String>,
 }

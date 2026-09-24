@@ -6,7 +6,7 @@ use crate::{
     },
     ipc,
 };
-use std::fs;
+use std::{fs, time::Instant};
 use tauri::Manager;
 
 pub fn run() {
@@ -20,6 +20,7 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            let setup_started = Instant::now();
             logging::init(app.handle());
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_autostart::init(
@@ -38,40 +39,66 @@ pub fn run() {
                         if event.state != ShortcutState::Pressed {
                             return;
                         }
+                        enum NativeAction {
+                            Capture(String),
+                            Paste(String),
+                            Show,
+                        }
                         let binding =
                             app.state::<crate::features::capture::session::NativeCaptureShortcut>();
                         let action = binding.0.lock().ok().and_then(|binding| {
+                            let workspace = binding
+                                .workspace_id
+                                .clone()
+                                .unwrap_or_else(|| "default".into());
                             if binding
                                 .shortcut
                                 .as_ref()
                                 .map(tauri_plugin_global_shortcut::Shortcut::id)
                                 == Some(shortcut.id())
                             {
-                                binding.workspace_id.clone().map(Some)
+                                Some(NativeAction::Capture(workspace))
+                            } else if binding
+                                .paste_shortcut
+                                .as_ref()
+                                .map(tauri_plugin_global_shortcut::Shortcut::id)
+                                == Some(shortcut.id())
+                            {
+                                Some(NativeAction::Paste(workspace))
                             } else if binding
                                 .show_shortcut
                                 .as_ref()
                                 .map(tauri_plugin_global_shortcut::Shortcut::id)
                                 == Some(shortcut.id())
                             {
-                                Some(None)
+                                Some(NativeAction::Show)
                             } else {
                                 None
                             }
                         });
                         let Some(action) = action else { return };
-                        // 前端只维护可配置绑定；截图热键命中后直接进入 Rust。
-                        // 已在框选时再次按下同一热键，会清理会话并关闭截图层。
                         let handle = app.clone();
                         tauri::async_runtime::spawn_blocking(move || {
                             let result = match action {
-                                Some(workspace_id) => crate::application::capture_actions::toggle(
-                                    &handle,
-                                    &workspace_id,
-                                ),
-                                None => crate::application::main_window_actions::show(&handle),
+                                NativeAction::Capture(workspace_id) => {
+                                    crate::application::capture_actions::toggle(
+                                        &handle,
+                                        &workspace_id,
+                                    )
+                                }
+                                NativeAction::Paste(workspace_id) => {
+                                    crate::application::desktop_actions::paste_clipboard_pin(
+                                        &handle,
+                                        &workspace_id,
+                                    )
+                                    .map(|_| ())
+                                }
+                                NativeAction::Show => {
+                                    crate::application::main_window_actions::show(&handle)
+                                }
                             };
                             if let Err(error) = result {
+                                log::error!("native_shortcut_failed reason={error}");
                                 let _ = handle.emit_to("main", "desktop:error", error);
                             }
                         });
@@ -106,12 +133,9 @@ pub fn run() {
             app.manage(database);
             app.manage(storage);
             crate::application::tray_actions::init(app.handle())?;
-            let capture_handle = app.handle().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                if let Err(error) = crate::application::capture_actions::warmup(&capture_handle) {
-                    log::warn!("capture_warmup_failed reason={error}");
-                }
-            });
+            if let Err(error) = crate::features::capture::native_shortcuts::restore(app.handle()) {
+                log::error!("native_shortcut_restore_failed reason={error}");
+            }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if let Err(error) = crate::application::desktop_actions::restore(&handle) {
@@ -124,7 +148,10 @@ pub fn run() {
                     );
                 }
             });
-            log::info!("app_ready");
+            log::info!(
+                "app_ready elapsed_ms={}",
+                setup_started.elapsed().as_millis()
+            );
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -158,21 +185,11 @@ pub fn run() {
             ipc::commands::ocr::ocr_image_bytes,
             ipc::commands::ocr::ocr_existing_image,
             ipc::commands::desktop::list_desktop_items,
-            ipc::commands::desktop::create_note,
-            ipc::commands::desktop::get_note,
-            ipc::commands::desktop::update_note,
             ipc::commands::desktop::create_pin,
             ipc::commands::desktop::paste_clipboard_pin,
-            ipc::commands::desktop::copy_pin_image,
-            ipc::commands::desktop::get_pin,
-            ipc::commands::desktop::open_desktop_object,
-            ipc::commands::desktop::close_desktop_object,
-            ipc::commands::desktop::delete_desktop_object,
-            ipc::commands::desktop::set_object_topmost,
-            ipc::commands::desktop::update_pin_zoom,
-            ipc::commands::desktop::recognize_pin,
-            ipc::commands::desktop::window_ready_to_quit,
-            ipc::commands::desktop::cancel_desktop_quit,
+            ipc::commands::desktop::open_pin,
+            ipc::commands::desktop::close_pin,
+            ipc::commands::desktop::delete_pin,
             ipc::commands::desktop::request_desktop_quit,
             ipc::commands::capture::start_capture,
             ipc::commands::capture::configure_native_capture,

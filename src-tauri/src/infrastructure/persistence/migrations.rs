@@ -8,7 +8,7 @@ pub fn run(database: &Database) -> Result<(), String> {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|error| format!("读取数据库版本失败: {error}"))?;
 
-    if version > 4 {
+    if version > 5 {
         return Err("数据库版本高于当前应用支持版本".into());
     }
 
@@ -52,6 +52,14 @@ pub fn run(database: &Database) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
     }
+    if version < 5 {
+        let tx = connection.transaction().map_err(|e| e.to_string())?;
+        tx.execute_batch(include_str!("../../../migrations/005_app_settings.sql"))
+            .map_err(|e| format!("升级应用设置数据库失败: {e}"))?;
+        tx.pragma_update(None, "user_version", 5)
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -78,7 +86,15 @@ mod tests {
         let version: i64 = c
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
+        let settings_table: String = c
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='app_settings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(settings_table, "app_settings");
         let name: String = c
             .query_row("SELECT name FROM workspaces WHERE id='default'", [], |r| {
                 r.get(0)

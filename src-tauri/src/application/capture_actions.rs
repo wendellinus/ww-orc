@@ -90,10 +90,6 @@ pub fn start(app: &tauri::AppHandle, workspace: &str) -> Result<String, String> 
     Ok(id)
 }
 
-pub fn warmup(app: &tauri::AppHandle) -> Result<(), String> {
-    platform_window::warmup(app)
-}
-
 #[cfg(desktop)]
 pub fn retain_native_shortcut(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
@@ -103,7 +99,13 @@ pub fn retain_native_shortcut(app: &tauri::AppHandle) -> Result<(), String> {
         .0
         .lock()
         .map_err(|_| "截图快捷键状态不可用")
-        .map(|binding| [binding.shortcut, binding.show_shortcut])?;
+        .map(|binding| {
+            [
+                binding.shortcut,
+                binding.paste_shortcut,
+                binding.show_shortcut,
+            ]
+        })?;
     let manager = app.global_shortcut();
     manager
         .unregister_all()
@@ -288,14 +290,6 @@ pub fn finish(
     let session = guard.take().ok_or("截图会话已结束")?;
     drop(guard);
     let mut pending_session = Some(session);
-    if action != "pin" {
-        clean(
-            app,
-            pending_session
-                .take()
-                .expect("截图会话清理状态应当存在"),
-        );
-    }
 
     let result = (|| -> Result<String, String> {
         let width = composed.image.width();
@@ -319,15 +313,12 @@ pub fn finish(
         }
         let id = stored.id.clone();
         let action_result = match action {
-            "pin" => super::desktop_actions::create_pin(app, &id).and_then(|pin| {
-                let label =
-                    crate::infrastructure::desktop_windows::manager::label("pin", &pin.id)?;
-                let window = app.get_webview_window(&label).ok_or("贴图窗口未创建")?;
-                window
-                    .set_position(pin_position)
-                    .map_err(|error| error.to_string())?;
-                crate::infrastructure::desktop_windows::manager::save(&window, "pin", &pin.id)
-            }),
+            "pin" => super::desktop_actions::create_pin_at(
+                app,
+                &id,
+                Some((pin_position.x, pin_position.y)),
+            )
+            .map(|_| ()),
             "ocr" => super::ocr_actions::recognize_asset(app, &id).map(|_| ()),
             "copy" => unreachable!(),
             _ => unreachable!(),
@@ -338,8 +329,7 @@ pub fn finish(
         Ok(id)
     })();
 
-    if action == "pin" && result.is_ok() {
-        let state = app.state::<CaptureState>();
+    if result.is_ok() {
         let restore_result = state
             .0
             .lock()

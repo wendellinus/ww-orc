@@ -6,7 +6,6 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { X } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { startCapture } from "@/features/capture";
-import { createNote } from "@/features/notes";
 import { createPin, pasteClipboardPin } from "@/features/pins";
 import { DesktopTools } from "./ui/desktop-tools";
 
@@ -571,14 +570,6 @@ function App() {
       captureBusy.current = false;
     }
   }
-  async function note() {
-    if (!activeWorkspaceId) return;
-    try {
-      await createNote(activeWorkspaceId);
-    } catch (e) {
-      setError(`创建便签失败：${String(e)}`);
-    }
-  }
   async function pin() {
     if (!selectedDocument) return;
     try {
@@ -643,15 +634,6 @@ function App() {
       run: async () => {
         if (activeWorkspaceId) await pasteClipboardPin(activeWorkspaceId);
       },
-    },
-    {
-      id: "notes.create",
-      title: "新建便签",
-      scope: "app",
-      global: true,
-      shortcut: "Mod+Shift+N",
-      enabled: () => desktop && Boolean(activeWorkspaceId),
-      run: note,
     },
     {
       id: "ocr.copyText",
@@ -736,7 +718,6 @@ function App() {
         workspaceId={activeWorkspaceId}
         imageId={selectedDocument?.imageId ?? null}
         onCapture={() => void shortcuts.execute("capture.start")}
-        onNote={() => void shortcuts.execute("notes.create")}
         onPin={() => void pin()}
         onError={setError}
         onManagerChange={setDesktopManagerOpen}

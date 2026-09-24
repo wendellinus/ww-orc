@@ -119,21 +119,6 @@ pub fn ensure(
     Ok(window)
 }
 
-pub fn warmup(app: &tauri::AppHandle) -> Result<(), String> {
-    for monitor in xcap::Monitor::all().map_err(|error| error.to_string())? {
-        ensure(
-            app,
-            monitor.id().map_err(|error| error.to_string())?,
-            monitor.x().map_err(|error| error.to_string())?,
-            monitor.y().map_err(|error| error.to_string())?,
-            monitor.width().map_err(|error| error.to_string())?,
-            monitor.height().map_err(|error| error.to_string())?,
-            monitor.scale_factor().map_err(|error| error.to_string())? as f64,
-        )?;
-    }
-    Ok(())
-}
-
 pub fn reveal_specs(app: &tauri::AppHandle, windows: &[CaptureWindowSpec]) -> Result<(), String> {
     for spec in windows {
         app.get_webview_window(&label(spec.monitor_id))
@@ -173,7 +158,7 @@ pub fn hide_and_reset(app: &tauri::AppHandle, snapshots: &[Snapshot]) {
         .collect::<Vec<_>>();
     hide(&windows);
     for window in windows {
-        let _ = window.emit("capture:reset", ());
+        let _ = window.emit("capture:dispose", ());
     }
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   getCapturePreview,
   getSnapshot,
@@ -22,6 +23,18 @@ type SharedSelection = {
   rect: Rect | null;
 };
 
+function sameRect(left: Rect | null, right: Rect | null) {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.x === right.x &&
+      left.y === right.y &&
+      left.width === right.width &&
+      left.height === right.height)
+  );
+}
+
 const RESIZE_HANDLES: ReadonlyArray<{
   handle: ResizeHandle;
   label: string;
@@ -35,11 +48,7 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { handle: "sw", label: "调整左下边界" },
   { handle: "w", label: "调整左边界" },
 ];
-export default function CaptureWindow({
-  monitorId,
-}: {
-  monitorId: number;
-}) {
+export default function CaptureWindow({ monitorId }: { monitorId: number }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [previewBytes, setPreviewBytes] = useState<ArrayBuffer | null>(null);
@@ -59,26 +68,72 @@ export default function CaptureWindow({
   const hovered = useRef<Rect | null>(null);
   const [hoverRect, setHoverRect] = useState<Rect | null>(null);
   const [selectionOwnerId, setSelectionOwnerId] = useState<number | null>(null);
+  const selectionFrame = useRef<number | null>(null);
+  const pendingSelection = useRef<SharedSelection | null>(null);
+  const outboundSelection = useRef<SharedSelection | null>(null);
+  const broadcastingSelection = useRef(false);
+
+  function clearPendingSelection() {
+    if (selectionFrame.current !== null) {
+      cancelAnimationFrame(selectionFrame.current);
+      selectionFrame.current = null;
+    }
+    pendingSelection.current = null;
+    outboundSelection.current = null;
+  }
+  function queueSelectionBroadcast(payload: SharedSelection) {
+    outboundSelection.current = payload;
+    if (broadcastingSelection.current) return;
+    broadcastingSelection.current = true;
+    void (async () => {
+      try {
+        while (outboundSelection.current) {
+          const next = outboundSelection.current;
+          outboundSelection.current = null;
+          await emit<SharedSelection>("capture:selection", next);
+        }
+      } catch (cause) {
+        outboundSelection.current = null;
+        setError(String(cause));
+      } finally {
+        broadcastingSelection.current = false;
+      }
+    })();
+  }
   function applySelection(value: Rect | null, owner: number | null) {
+    if (selectionOwner.current === owner && sameRect(selection.current, value)) {
+      return;
+    }
     selectionOwner.current = owner;
-    setSelectionOwnerId(owner);
     selection.current = value;
+    setSelectionOwnerId(owner);
     setRect(value);
   }
   function setSelection(value: Rect | null) {
-    applySelection(value, monitorId);
-    if (!sessionId) return;
-    void emit<SharedSelection>("capture:selection", {
-      sessionId,
+    selectionOwner.current = monitorId;
+    selection.current = value;
+    pendingSelection.current = {
+      sessionId: sessionId ?? "",
       ownerMonitorId: monitorId,
       rect: value,
+    };
+    if (selectionFrame.current !== null) return;
+    selectionFrame.current = requestAnimationFrame(() => {
+      selectionFrame.current = null;
+      const next = pendingSelection.current;
+      pendingSelection.current = null;
+      if (!next) return;
+      setSelectionOwnerId(next.ownerMonitorId);
+      setRect(next.rect);
+      if (next.sessionId) queueSelectionBroadcast(next);
     });
   }
   useEffect(() => {
     let disposed = false;
     const stops: Array<() => void> = [];
     const activate = (nextSessionId: string) => {
-      // 预热窗口会长期跨会话复用，因此交互引用和可见状态必须成组重置。
+      clearPendingSelection();
+      // 每次截图窗口都独立创建；激活时仍统一初始化全部交互状态。
       revealing.current = false;
       finishing.current = false;
       drawing.current = false;
@@ -98,6 +153,7 @@ export default function CaptureWindow({
       setSessionId(nextSessionId);
     };
     const reset = () => {
+      clearPendingSelection();
       drawing.current = false;
       draggingFree.current = false;
       interaction.current = null;
@@ -116,7 +172,10 @@ export default function CaptureWindow({
     };
     void Promise.all([
       listen<string>("capture:start", (event) => activate(event.payload)),
-      listen("capture:reset", reset),
+      listen("capture:dispose", () => {
+        reset();
+        setTimeout(() => void getCurrentWindow().destroy(), 0);
+      }),
     ])
       .then((unlisteners) => {
         if (disposed) {
@@ -137,6 +196,7 @@ export default function CaptureWindow({
       });
     return () => {
       disposed = true;
+      clearPendingSelection();
       stops.forEach((stop) => stop());
     };
   }, [monitorId]);
@@ -230,10 +290,7 @@ export default function CaptureWindow({
       ),
     };
   }
-  function beginInteraction(
-    e: React.PointerEvent,
-    next: SelectionInteraction,
-  ) {
+  function beginInteraction(e: React.PointerEvent, next: SelectionInteraction) {
     if (!selectionLayer.current) return;
     interaction.current = next;
     drawing.current = true;
@@ -281,6 +338,7 @@ export default function CaptureWindow({
     };
   }
   function setHovered(value: Rect | null) {
+    if (sameRect(hovered.current, value)) return;
     hovered.current = value;
     setHoverRect(value);
   }
@@ -301,41 +359,8 @@ export default function CaptureWindow({
     setPinning(action === "pin");
     setError(null);
     try {
-      if (action !== "pin") {
-        await finishCapture(sessionId, monitorId, rect, action);
-        return;
-      }
-
-      let expectedPinId: string | null = null;
-      let resolveReady = () => {};
-      const readyIds = new Set<string>();
-      const ready = new Promise<void>((resolve) => {
-        resolveReady = resolve;
-      });
-      const stop = await listen<{ id: string }>("pin:ready", (event) => {
-        readyIds.add(event.payload.id);
-        if (event.payload.id === expectedPinId) resolveReady();
-      });
-      try {
-        expectedPinId = await finishCapture(
-          sessionId,
-          monitorId,
-          rect,
-          action,
-        );
-        if (readyIds.has(expectedPinId)) resolveReady();
-        let timeout: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([
-          ready,
-          new Promise<void>((resolve) => {
-            timeout = setTimeout(resolve, 1600);
-          }),
-        ]);
-        clearTimeout(timeout);
-        await cancelCapture(sessionId);
-      } finally {
-        stop();
-      }
+      await finishCapture(sessionId, monitorId, rect, action);
+      await cancelCapture(sessionId);
     } catch (e) {
       setError(String(e));
       finishing.current = false;
@@ -369,17 +394,11 @@ export default function CaptureWindow({
     const stops: Array<() => void> = [];
     void Promise.all([
       listen("capture:pin-selection", () => {
-        if (
-          !drawing.current &&
-          selectionOwner.current === monitorId
-        )
+        if (!drawing.current && selectionOwner.current === monitorId)
           void finish("pin");
       }),
       listen("capture:copy-selection", () => {
-        if (
-          !drawing.current &&
-          selectionOwner.current === monitorId
-        )
+        if (!drawing.current && selectionOwner.current === monitorId)
           void finish("copy");
       }),
     ])
@@ -420,9 +439,9 @@ export default function CaptureWindow({
   }, [sessionId, monitorId]);
   const valid = Boolean(
     rect &&
-      rect.width >= 2 &&
-      rect.height >= 2 &&
-      selectionOwnerId === monitorId,
+    rect.width >= 2 &&
+    rect.height >= 2 &&
+    selectionOwnerId === monitorId,
   );
   const activeRect = rect ?? hoverRect;
   return (
@@ -453,9 +472,7 @@ export default function CaptureWindow({
           draggingFree.current = false;
           const origin = point(e);
           interaction.current = { mode: "draw", origin };
-          setSelection(
-            hovered.current ?? { ...origin, width: 0, height: 0 },
-          );
+          setSelection(hovered.current ?? { ...origin, width: 0, height: 0 });
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
         onPointerMove={(e) => {
@@ -496,10 +513,7 @@ export default function CaptureWindow({
             return;
           }
           const o = active.origin;
-          if (
-            !draggingFree.current &&
-            Math.hypot(p.x - o.x, p.y - o.y) < 4
-          ) {
+          if (!draggingFree.current && Math.hypot(p.x - o.x, p.y - o.y) < 4) {
             return;
           }
           draggingFree.current = true;
@@ -576,27 +590,27 @@ export default function CaptureWindow({
       </div>
       {!rect || selectionOwnerId === monitorId ? (
         <aside className="capture-toolbar" aria-label="截图工具">
-        <span>
-          {busy
-            ? "处理中…"
-            : valid
-              ? "拖动选区或控制点可继续调整"
-              : hoverRect
-                ? "单击选择窗口，或拖动自由框选"
-                : "移动到窗口，或拖动框选区域"}
-        </span>
-        <button disabled={!valid || busy} onClick={() => void finish("pin")}>
-          贴到桌面 · Ctrl+V / F3
-        </button>
-        <button disabled={!valid || busy} onClick={() => void finish("ocr")}>
-          OCR 并记录
-        </button>
-        <button disabled={!valid || busy} onClick={() => void finish("copy")}>
-          复制图片 · Ctrl+C
-        </button>
-        <button disabled={busy} onClick={() => void cancel()}>
-          取消 · Esc
-        </button>
+          <span>
+            {busy
+              ? "处理中…"
+              : valid
+                ? "拖动选区或控制点可继续调整"
+                : hoverRect
+                  ? "单击选择窗口，或拖动自由框选"
+                  : "移动到窗口，或拖动框选区域"}
+          </span>
+          <button disabled={!valid || busy} onClick={() => void finish("pin")}>
+            贴到桌面 · Ctrl+V / F3
+          </button>
+          <button disabled={!valid || busy} onClick={() => void finish("ocr")}>
+            OCR 并记录
+          </button>
+          <button disabled={!valid || busy} onClick={() => void finish("copy")}>
+            复制图片 · Ctrl+C
+          </button>
+          <button disabled={busy} onClick={() => void cancel()}>
+            取消 · Esc
+          </button>
         </aside>
       ) : null}
       {error ? (

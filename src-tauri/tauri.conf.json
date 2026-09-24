@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "ww-ocr",
         "width": 1280,
         "height": 900,

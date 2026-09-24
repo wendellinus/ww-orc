@@ -2,46 +2,47 @@
 
 ## 已实现功能
 
-截图与框选、多显示器单屏区域选择、桌面贴图、贴图缩放与 OCR、便签颜色与自动保存、便签独立置顶、对象管理与删除确认、SQLite 持久化、窗口恢复、托盘、可配置全局快捷键。
+截图与框选、多显示器单屏区域选择、Win32 原生桌面贴图、贴图缩放与 OCR、对象管理与删除确认、SQLite 持久化、窗口恢复、托盘、可配置全局快捷键。
 
-版本：Tauri Rust 2.11.5、JS API 2.11.1、React 19.2.8、Tailwind CSS 4.3.3、XCap 0.9.8、image 0.25.10、rusqlite 0.40.2、paddle-ocr-rs 0.6.1、ort 2.0.0-rc.10。采用一条明确实现路线，不增加备用引擎。
+版本以依赖声明和锁文件为准：Tauri 2、React 19、Tailwind CSS 4.3.3、XCap 0.9.8、image 0.25、rusqlite 0.40.2、paddle-ocr-rs 0.6.1、ort 2.0.0-rc.10、windows 0.61.3。
 
 ## 模块依赖
 
 ```text
-窗口界面 → 前端 features → IPC → application
+主界面 → 前端 features → IPC → application
                                 ↙         ↘
                            features   infrastructure
 ```
 
-application 组合功能；features 拥有模型和数据访问，不互相调用服务。共享图像类型是功能输入，不附加窗口和识别行为。infrastructure 负责数据库、文件资源定位、窗口及系统适配，不调用业务流程。IPC 解析参数并校验调用窗口归属，前端功能通过公开入口供 app 组装。
+application 组合业务流程；features 拥有模型和数据访问；infrastructure 负责数据库、文件资源、原生窗口和系统适配。
 
+## 性能边界
+
+保留 Tauri/React 负责工作区、设置和 OCR 历史等低频管理界面；主 WebView 按需创建。托盘、全局快捷键、贴图和其他高频系统交互放在 Rust/Win32。Paddle/ONNX Runtime 继续作为唯一 OCR 引擎，除非真实数据集证明替换后准确率不下降。截图框选迁移原生前，指针状态按动画帧合并，跨显示器事件只保留最新值，避免高频 IPC 堆积。
 ## 具体实现
 
-| 功能 | 实现与隔离 |
-| --- | --- |
-| 图片 | image_assets 校验、保存和查询；被截图、贴图、OCR 共同引用 |
-| 截图 | capture 拥有会话和显示器快照；coordinates 校验选区；application 调用 XCap 采集并组合后续动作 |
-| 框选 | 每个显示器独立窗口，显示冻结画面和选区，不操作数据库 |
-| 贴图 | pins 拥有图片引用、缩放和打开状态；透明无阴影纯图片窗口始终置顶，缩放同步物理尺寸，操作在右键菜单；窗口复用 desktop_windows |
-| 便签 | notes 拥有正文、颜色、revision；前端 NoteAutosave 串行合并草稿写入 |
-| OCR | 复用 engine/layout，识别在后台 spawn_blocking 执行；引擎 mutex 保证串行并复用模型；文字块原图坐标随结果持久化 |
-| OCR 历史 | documents 查询每张图片最新 run，不绑定图片必须识别 |
-| 窗口 | desktop_windows 管理创建、几何状态和恢复；application 接入生命周期及对象打开状态 |
-| 快捷键 | 复用既有主窗口快捷键注册系统，避免重复注册；新增截图和便签全局命令 |
-| 托盘 | infrastructure 只输出操作枚举，application 调度功能 |
-| 剪贴板 | Rust clipboard-manager 写截图；贴图通过受限权限复制 OCR 文字 |
-| 存储 | SQLite 版本 2 + 原图文件，具体 SQL 归属对应 repository |
+| 功能     | 实现                                                                                               |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| 图片     | image_assets 校验、保存和查询，被截图、贴图、OCR 共同引用                                          |
+| 截图     | capture 管理会话和显示器快照；XCap 采集，WebView 框选层按需创建，完成或取消后立即销毁              |
+| 贴图     | pins 保存图片引用、缩放和打开状态；Windows 使用独立消息线程创建 layered HWND，不创建 WebView2      |
+| 原生渲染 | Rust image 解码 RGBA；滚轮期间用 Triangle 重采样，停稳后从原始预乘像素执行 Lanczos3 重采样，再由 UpdateLayeredWindow 合成 |
+| 贴图交互 | 左键拖动；滚轮以固定左上角缩放，限制为 0.1–3 倍、最大边 8192、最大 32MP；双击/Esc 关闭；右键复制/OCR/恢复比例 |
+| OCR      | engine/layout 在 spawn_blocking 中执行；引擎串行复用模型                                           |
+| 窗口状态 | window_states 保存贴图位置、尺寸和置顶状态；退出保留 is_open，启动时恢复                           |
+| 剪贴板   | Rust clipboard-manager 读写图片和 OCR 文字                                                         |
+| 存储     | SQLite 元数据与应用数据目录中的原图文件                                                            |
 
-模型路径按构建模式明确选择：debug 为 src-tauri/models，release 为 resource_dir/models。缺失直接报错，不搜索其他位置。
+## 启动路径
 
+进程先初始化日志、SQLite、托盘和 Rust 全局快捷键，不创建主 WebView2。F1 截图、F3 剪贴板贴图和 Ctrl+Shift+O 唤起立即可用；打开主界面时才创建 React/WebView2，隐藏超过 5 分钟后销毁。OCR 引擎仍在首次识别时惰性初始化。
 ## 操作流程
 
-截图：隐藏可见主界面 → 采集各显示器 → 发布会话并释放锁 → 创建全部隐藏框选窗口 → 展示 → 确认选区 → 消费一次会话并清理窗口/预览 → 保存原图 → 贴图/OCR/复制。禁止持有会话锁等待 WebView 创建，避免多屏 IPC 初始化死锁。
+截图贴图：隐藏界面 → 捕获显示器 → 按需创建框选 WebView → 保存原图 → 原生线程解码并创建 HWND → 销毁框选 WebView。
 
-便签：创建记录 → 创建独立窗口 → 读取正文和 revision → 延迟合并并串行保存 → 关闭前 flush → 保存窗口状态并关闭。失败保留草稿和窗口。
+剪贴板贴图：读取 RGBA → 像素哈希去重 → 保存 PNG → 创建原生贴图。已存在相同贴图时直接唤起。
 
-退出：通知全部对象 flush → 每个窗口确认自身保存成功 → 保存几何状态 → 退出，保持 is_open 供重启恢复。主窗口关闭只隐藏到托盘。
+退出：原生线程同步保存所有贴图几何状态 → 标记退出 → 退出进程。用户主动关闭贴图时设置 is_open=false。
 
 ## 目录
 
@@ -49,47 +50,22 @@ application 组合功能；features 拥有模型和数据访问，不互相调�
 src/
   app/{App,window-router}.tsx
   app/ui/desktop-tools.tsx
-  features/
-    capture/{api,index}.ts
-    notes/{api,index}.ts
-    notes/model/autosave.ts
-    notes/test/autosave.test.mjs
-    pins/{api,index}.ts
-    ocr/                       # 原有识别记录与 API
-    workspace/                 # 原有工作区
-    shortcuts/                 # 可配置局部和全局快捷键
-  windows/
-    capture/CaptureWindow.tsx
-    pin/PinWindow.tsx
-    note/NoteWindow.tsx
-  shared/window/{api.ts,WindowBar.tsx}
+  features/{capture,pins,ocr,workspace,shortcuts}/
+  windows/capture/CaptureWindow.tsx
   shared/styles/desktop.css
 src-tauri/
-  migrations/{001_initial,002_desktop}.sql
+  migrations/
   models/
-  capabilities/{default,desktop-windows,capture}.json
+  capabilities/{default,capture}.json
   src/
-    lib.rs
-    bootstrap.rs
-    ipc/authorization.rs
     ipc/commands/{capture,desktop,ocr,documents,workspace}.rs
-    application/{capture_actions,desktop_actions,tray_actions,ocr_actions,document_actions,workspace_actions}.rs
-    features/
-      capture/{mod,session,coordinates}.rs
-      notes/{mod,model,repository}.rs
-      pins/{mod,model,repository}.rs
-      image_assets/{mod,storage,types,repository}.rs
-      ocr/{mod,engine,layout}.rs
-      documents/{mod,repository,types}.rs
-      workspace/{mod,repository,types}.rs
+    application/{capture_actions,desktop_actions,tray_actions,ocr_actions}.rs
+    features/{capture,pins,image_assets,ocr,documents,workspace}/
     infrastructure/
-      desktop_windows/{mod,manager,repository}.rs
-      persistence/{mod,database,migrations}.rs
-      paths.rs
-      logging.rs
-      tray.rs
+      desktop_windows/{manager,repository}.rs
+      persistence/
 ```
 
-## 本轮边界
+## 边界
 
-跨显示器连续选区、图片标注、鼠标穿透、便签富文本、OCR 文字框叠层尚未提供。没有额外 OCR 引擎、云服务或 Python sidecar。使用说明见 desktop-tools.md。
+原生贴图当前仅在 Windows 构建；跨显示器连续选区、图片标注、鼠标穿透和 OCR 文字框叠层尚未提供。历史数据库中的 notes 表保留用于升级兼容，应用已不再提供便签功能。
